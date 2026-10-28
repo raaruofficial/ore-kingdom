@@ -86,7 +86,11 @@ try:
                 p = a + b - c; pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
                 pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
                 line[i] = (line[i] + pr) & 0xff
-        if y % 8 == 0:
+        # Census the APP AREA only: exclude the top status bar (4%) and
+        # the bottom navigation bar (8%). Attempt 2's pass came from the
+        # emulator's light nav bar over a still-black app window — the
+        # crop is what makes this number about the app, not the chrome.
+        if y % 8 == 0 and h * 0.04 < y < h * 0.92:
             for x in range(0, w, 8):
                 i = x * bpp
                 if line[i] > 24 or line[i+1] > 24 or line[i+2] > 24:
