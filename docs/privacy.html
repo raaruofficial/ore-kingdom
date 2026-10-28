@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Ore Kingdom</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #080808; color: #e8e2d4; font-family: Georgia, 'Times New Roman', serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 40px 24px 64px; line-height: 1.65; font-size: 15.5px; }
+  h1 { font-size: 26px; } h2 { font-size: 20px; margin-top: 32px; } h3 { font-size: 17px; }
+  a { color: #c9a959; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid #2a271e; padding: 8px; vertical-align: top; text-align: left; }
+  code { color: #c9a959; }
+</style>
+</head>
+<body>
+<main>
+<h1>Ore Kingdom — Privacy Policy</h1>
+<p><strong>Effective date:</strong> October 28, 2026</p>
+<h2>1. Definitions</h2>
+<ul>
+<li><strong>"Company," "we," "us":</strong> Raaru, the publisher of Ore Kingdom.</li>
+<li><strong>"Wallet address":</strong> your Solana wallet address. Ore Kingdom identifies you <strong>directly by your wallet address, bound to a .skr name</strong>: when you sign in, the app resolves the .skr names your wallet holds on the Solana mainnet registry and binds the first one to your account. Your forum name <strong>is</strong> that .skr name — the app sets your display name to it, and it is shown on everything you post. There is no separate username, email account, or password. <strong>Your forum name is your wallet. Everything you do here is permanently linkable to your on-chain finances.</strong></li>
+<li><strong>"User content":</strong> threads, replies, and any other material you publish through Ore Kingdom (see §3.2 — user content is public by nature).</li>
+</ul>
+<h2>2. Scope — stated plainly</h2>
+<p>Ore Kingdom is a community forum for the ORE community: discussion of ORE, mining, and the surrounding ecosystem, organized into categories and threads, with a members' area ("The Motherlode") for founding members. This policy covers the Ore Kingdom app and the hosted service that runs it — operated by Raaru, with the forum database held on servers we operate in the United States. There is no analytics or advertising service in the product, and no third-party data recipient other than the public infrastructure named in §3.5 (the Solana public RPC).</p>
+<h2>3. Data we collect</h2>
+<h3>3.1 Identity and sign-in</h3>
+<ul>
+<li><strong>To read the forum, you need nothing.</strong> Public threads are readable without a wallet and without an account.</li>
+<li><strong>To post, reply, react, or report, you sign in with Solana (SIWS).</strong> You connect a wallet that holds a .skr name and sign a sign-in message in your wallet. The server verifies the signature and the .skr binding, then creates or updates your member record with your wallet address, your .skr name as your display name, a generated referral code, and the time your .skr was verified. No email address is collected, and no password exists.</li>
+<li><strong>What the server does not receive:</strong> your private key or seed phrase, ever. Signing happens in your wallet; the server receives a signature over the sign-in message, checks it, and discards it — sign-in signatures are not stored.</li>
+<li><strong>After sign-in:</strong> later actions authorize on your wallet address as recorded. The .skr binding happens once, at sign-in; participation then rides on the bound wallet identity.</li>
+<li><strong>No demo or test accounts.</strong> The service refuses demo and test wallet strings. There is no anonymous posting and no simulated sign-in in the shipped product.</li>
+</ul>
+<h3>3.2 User-posted content — PUBLIC BY NATURE</h3>
+<ul>
+<li>Threads and replies you publish in Ore Kingdom are <strong>public</strong>: visible to anyone who can access the forum, and associated with your .skr name — which is your wallet.</li>
+<li>A wallet address is a public identifier by design. Anything you post can be read, copied, quoted, and indexed by others, and may remain visible in copies outside our control even after removal here (§6).</li>
+<li><strong>Never post a seed phrase, private key, or personal information you do not want public.</strong> We will never ask for your seed phrase or private key, in the forum or anywhere else.</li>
+<li><strong>Where posts are stored:</strong> in the forum's hosted database (a SQLite database on the service host). <strong>Posts are not written on-chain by this app.</strong> They are database rows, not Solana records. That is why the deletion promise in §6 works the way it does: we can delete our copy of your posts, but we cannot erase the chain-side identity they were posted under, and we cannot recall copies others made while they were public.</li>
+</ul>
+<h3>3.3 Server-side storage (beyond posted content)</h3>
+<ul>
+<li><strong>Your profile:</strong> wallet address, .skr name, display name (your .skr name), bio, reputation, founding status and number, referral code, and founder-credit days.</li>
+<li><strong>Reactions, votes, and notifications:</strong> your likes, poll votes (changeable; only your current vote is kept), and server-generated notifications (replies to you, mentions, milestones).</li>
+<li><strong>Referrals:</strong> your referral code, and a record linking referrer and converted member when a code is used.</li>
+<li><strong>Moderation records:</strong> reports you file or that target your content (reporter identity, target, reason, your written details, a computed weight), the moderation log (every enforcement event, including a public-facing description), restore votes, and enforcement state on your account (strikes, mutes, bans) and content (hidden/quarantine flags). See §6 — moderation records are retained, not covered by the content-deletion promise.</li>
+<li><strong>Rate-limit records:</strong> a log of your mutating actions (post, reply, react, and similar) by wallet and action type, used only to enforce rate limits. It has no automatic purge in the product.</li>
+<li><strong>Membership records:</strong> your founding claim (the first 500 members claim a free founding badge) and membership state changes. <strong>The shipped service creates no purchase records: every checkout action is refused (see §5).</strong></li>
+<li><strong>Operator configuration:</strong> forum settings (thresholds, naming, plan identifiers). This is service configuration, not user data.</li>
+<li><strong>Report review:</strong> reports are recorded and automated enforcement applies (weighted auto-hide, strike escalation). Reports are reviewed by the publisher (Raaru). Appeals go to raaruofficial@gmail.com and are decided by the publisher. <em>(D6 shipping default, drafted 2026-10-28; the owner's one-line confirmation rides the tap package.)</em></li>
+<li><strong>Logs:</strong> the product stores no access/IP log table and collects no IP-address or device identifier in its code.</li>
+</ul>
+<h3>3.4 Analytics and technical data</h3>
+<ul>
+<li><strong>None.</strong> No analytics SDK, telemetry, crash reporting, or advertising identifier exists in the product. Ore Kingdom does not track you across apps or sites.</li>
+<li><strong>No advertising.</strong> No ad SDK, no ad network, no sale of personal data to anyone, for any reason.</li>
+</ul>
+<h3>3.5 What leaves your device or the host — the complete list</h3>
+<ul>
+<li><strong>To the Solana public RPC</strong> (<code>https://api.mainnet-beta.solana.com</code>): .skr registry lookups carrying your wallet address (read-only), and whatever the wallet components request. This is how your .skr name is resolved; the RPC operator sees that this wallet asked.</li>
+<li><strong>Fonts are served by the app itself.</strong> The shipped build self-hosts its fonts; no font request leaves the service. (An earlier design loaded fonts from Google Fonts; the shipped build does not — corrected 2026-10-28 against the sealed client, whose network log shows zero Google requests.)</li>
+<li><strong>To your own client:</strong> forum content, member display data, notifications, and public configuration.</li>
+<li><strong>On-chain writes: none.</strong> The app constructs no transaction and takes no payment (see §5).</li>
+<li><strong>No other recipient exists in the product.</strong> No payment processor, no analytics provider, no third-party service receives your data.</li>
+</ul>
+<h3>3.6 What we do not collect</h3>
+<ul>
+<li><strong>No private keys, no seed phrases — ever.</strong> Signing happens in your wallet (via the Mobile Wallet Adapter on the device); the app never sees your keys.</li>
+<li><strong>No email addresses, no passwords, no phone numbers, no location data.</strong></li>
+<li><strong>No sale of personal data</strong> to anyone, for any reason.</li>
+</ul>
+<h2>4. How we use your data</h2>
+<ul>
+<li><strong>To run the forum:</strong> display threads and replies, link content to its author's .skr identity, serve the members' area, and operate the service.</li>
+<li><strong>To moderate:</strong> process reports, apply the strike and auto-hide rules, restore content on restore-vote quorum, and maintain the public moderation log.</li>
+<li><strong>To enforce limits:</strong> rate-limit mutating actions by wallet.</li>
+<li>We do not use your data for advertising, and we do not sell it. We do not use it for any purpose not listed here.</li>
+</ul>
+<h2>5. Wallet and funds</h2>
+<ul>
+<li><strong>Ore Kingdom is free, and this version takes no payments.</strong> Every checkout action in the service is refused — the founding badge is a free claim (first 500), and no tier, badge, tip, or pin can be bought in this version. Nothing is deducted and nothing is transferred, and the app never holds funds and never holds your keys.</li>
+<li><strong>If a future version ever asks you to pay,</strong> that version's policy and listing will state the exact charges, assets, and destination before you pay, and the publisher's posture — all sales final, refunds are not available — will apply to it. In this version there is nothing to refund because nothing is charged.</li>
+</ul>
+<h2>6. Data retention and deletion</h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>What it covers</th>
+<th>Retention</th>
+<th>What you can ask for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Database content — deletable on request</strong></td>
+<td>Your threads, replies, reactions, poll votes, notifications, profile fields, referral links, rate-limit rows, and membership records</td>
+<td>Kept until the operator deletes them. In the app itself, "removal" means hiding — the row stays.</td>
+<td>On a verified request, we delete these rows from our database and confirm within 30 days.</td>
+</tr>
+<tr>
+<td><strong>On-chain records — permanent; no deletion can reach</strong></td>
+<td>Your wallet address and .skr name (public registry records)</td>
+<td>Forever, by the nature of the chain. <strong>This version writes nothing on-chain</strong>, so today this class is the identity layer itself — and it is already permanent.</td>
+<td>None, and none is implied. Deleting our database rows cannot touch the chain, the .skr registry, or the public linkability of your wallet.</td>
+</tr>
+<tr>
+<td><strong>Moderation records — retained</strong></td>
+<td>Reports, the moderation log (including its public-facing descriptions), restore votes, strikes, mutes, bans, and quarantine reasons</td>
+<td><strong>No period is set anywhere in the product</strong> — retained indefinitely, for as long as the database is kept. Deleting the underlying content does <strong>not</strong> delete the moderation record about it.</td>
+<td>Excluded from the content-deletion promise. You may ask what moderation records we hold about you at the contact address; removal of enforcement records is not offered, because strikes and bans cannot be enforced without them.</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>How to request deletion of data we control:</strong> email <code>raaruofficial@gmail.com</code>, identify your wallet, and be ready to prove it is yours by signing a short message with that wallet (accounts carry no email address, so the wallet signature is the proof). We will confirm within 30 days.</li>
+<li><strong>The reconciliation, stated once and plainly:</strong> the signup disclosure — <em>"Your forum name is your wallet. Everything you do here is permanently linkable to your on-chain finances"</em> — and the deletion offer above are both true, because they govern different objects. The disclosure is about <strong>linkability</strong>: your forum identity is a public wallet, and no app can unpublish that. The deletion offer is about <strong>our copy</strong>: the rows in one operator-held database. Neither statement stretches over the other's object. Public posts you made may survive in other users' copies, quotes, screenshots, and external indexes outside our control.</li>
+<li><strong>Public moderation log note:</strong> the newest moderation-log entries carry a public description that any reader can see. Deleting your content does not remove its log entry.</li>
+</ul>
+<h2>7. Security</h2>
+<p>We use reasonable technical and organizational measures to protect your data. No method of transmission or storage is completely secure, and we cannot guarantee absolute security.</p>
+<h2>8. Children's privacy</h2>
+<p>Ore Kingdom is not directed at children under 13, and we do not knowingly collect data from children under 13. The product has no age gate — it requires a wallet holding a .skr name, and it collects no age information. If you believe a child has provided data, contact <code>raaruofficial@gmail.com</code> and we will delete it.</p>
+<h2>9. Changes to this policy</h2>
+<p>If we change this policy, we will post the new version at the same URL and update the effective date above. Material changes will also be announced inside the app (announcement posts are a built-in mechanism of the forum).</p>
+<h2>10. Contact</h2>
+<p><code>Raaru</code> — privacy questions, data requests, and deletion requests: <code>raaruofficial@gmail.com</code></p>
+<p><a href="index.html">← Ore Kingdom</a></p>
+</main>
+</body>
+</html>
