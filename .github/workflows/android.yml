@@ -1,0 +1,112 @@
+# Ore Kingdom - Android CI (inherited from the VOIDRUNNER workflow, adapted
+# 2026-10-28 per PLAN_ARCHITECT Phase 3): build-debug on push; build-release
+# (signed, from repo secrets) + verify-shell emulator cold run on v* tags only.
+
+name: Android CI
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-debug:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: orekingdom-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+  build-release:
+    name: Build signed release APK
+    runs-on: ubuntu-latest
+    # Only on version tags, e.g. `git tag v0.1.0 && git push origin v0.1.0`
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Restore signing keystore from secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > /tmp/orekingdom-release.jks
+          echo "KEYSTORE_FILE=/tmp/orekingdom-release.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        env:
+          ORE_KINGDOM_API_BASE: ${{ vars.ORE_KINGDOM_API_BASE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: orekingdom-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 90
+
+  verify-shell:
+    name: Verify corrected shell (emulator cold run)
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download signed release APK
+        uses: actions/download-artifact@v4
+        with:
+          name: orekingdom-release-apk
+          path: release-apk
+
+      - name: Cold-run the signed APK on a fresh emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7_pro
+          script: ./tools/verify-cold-run.sh
+
+      - name: Upload cold-run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-shell-evidence
+          path: verify-evidence/
+          retention-days: 90
