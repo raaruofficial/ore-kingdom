@@ -164,7 +164,9 @@ echo "== am start -W: $am_out"
 
 state_v="$(await_state cold 180 | tail -n 1)"
 adb logcat -d > "$OUT/logcat.txt" 2>&1 || true
-if [ "$install_v" = "ok" ] && ! grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
+# Crash scan is scoped to OUR process: a bare "FATAL EXCEPTION" grep also
+# catches the uiautomator tool's own timeout crashes (attempt 3).
+if [ "$install_v" = "ok" ] && ! grep -q "Process: $PKG" "$OUT/logcat.txt"; then
   crash_v="0"
 fi
 echo "== cold state: $state_v"
@@ -178,7 +180,7 @@ adb logcat -c >/dev/null 2>&1 || true
 adb shell am start -W -n "$ACT" >/dev/null 2>&1
 offline_state="$(await_state offline 150 | tail -n 1)"
 adb logcat -d > "$OUT/logcat-offline.txt" 2>&1 || true
-if grep -q "FATAL EXCEPTION" "$OUT/logcat-offline.txt"; then
+if grep -q "Process: $PKG" "$OUT/logcat-offline.txt"; then
   crash_v="FAIL"
 fi
 echo "== offline state: $offline_state"
