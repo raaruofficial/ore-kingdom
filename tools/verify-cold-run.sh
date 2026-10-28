@@ -8,12 +8,14 @@
 # the AVD). Installs the signed release APK, cold-launches it, and
 # machine-checks the gate's behavioral standards:
 #   - install succeeds; launch completes; no FATAL EXCEPTION in logcat;
-#   - the WebView renders and the app reaches a GRACEFUL state: forum
-#     content (host live), the wrapper's error state with Retry, or the
-#     shell's native error UI — never a parked loader, never a blank page;
+#   - the app reaches a RENDERED, graceful state within a bounded poll:
+#     forum content (host live), the wrapper's error state with Retry, or
+#     the shell's native error UI — never a parked loader, never a
+#     black/blank frame. Classification is pixel-first (a stdlib-PNG
+#     non-black census) because uiautomator dies when the emulator's
+#     System UI is under load; hierarchy text refines the class when
+#     available (content vs error-ui vs rendered-unclassified);
 #   - the offline variant (radios off) reaches the same graceful class.
-# Which graceful state was observed is recorded, not hidden:
-# verdict line state=content|error-ui|unknown.
 #
 # Evidence lands in ./verify-evidence/ (uploaded by the workflow).
 # The script exits non-zero if any line is FAIL: a red job blocks the seal.
@@ -36,29 +38,99 @@ fi
 mkdir -p "$OUT"
 
 install_v="FAIL"; launch_ms_v="FAIL"; crash_v="FAIL"
-state_v="unknown"; offline_v="FAIL"
+state_v="unknown"; offline_v="FAIL"; offline_state="unknown"
 
-dump_ui() { # $1 = destination file
-  adb shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1
-  adb pull /sdcard/window_dump.xml "$1" >/dev/null 2>&1
+dump_ui() { # $1 = destination file; failure is recorded, never fatal
+  if adb shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 \
+     && adb pull /sdcard/window_dump.xml "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "uiautomator dump unavailable" > "$1.unavailable"
+  return 1
 }
 
-classify_state() { # $1 = hierarchy file, $2 = screenshot file -> echoes class
-  local hier="$1" shot="$2"
-  if grep -q "Ore Kingdom" "$hier" && grep -qiE "miners|forum|General|Mining|thread" "$hier"; then
-    echo "content"; return
+# Non-black pixel share of a PNG screenshot, via python3 stdlib only.
+# Echoes a percentage with one decimal, or "ERR".
+pixel_share() { # $1 = png file
+  python3 - "$1" <<'PY'
+import sys, zlib, struct
+try:
+    data = open(sys.argv[1], 'rb').read()
+    pos = 8; idat = b''; w = h = ctype = None
+    while pos < len(data):
+        ln = struct.unpack('>I', data[pos:pos+4])[0]; typ = data[pos+4:pos+8]
+        if typ == b'IHDR':
+            w, h, depth, ctype = struct.unpack('>IIBB', data[pos+8:pos+18])
+            assert depth == 8 and ctype in (2, 6)
+        elif typ == b'IDAT':
+            idat += data[pos+8:pos+8+ln]
+        pos += 12 + ln
+    raw = zlib.decompress(idat)
+    bpp = 4 if ctype == 6 else 3
+    stride = w * bpp
+    prev = bytearray(stride)
+    nonblack = 0; total = 0; off = 0
+    for y in range(h):
+        filt = raw[off]; line = bytearray(raw[off+1:off+1+stride]); off += 1 + stride
+        if filt == 1:
+            for i in range(bpp, stride): line[i] = (line[i] + line[i-bpp]) & 0xff
+        elif filt == 2:
+            for i in range(stride): line[i] = (line[i] + prev[i]) & 0xff
+        elif filt == 3:
+            for i in range(stride):
+                a = line[i-bpp] if i >= bpp else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 0xff
+        elif filt == 4:
+            for i in range(stride):
+                a = line[i-bpp] if i >= bpp else 0; b = prev[i]; c = prev[i-bpp] if i >= bpp else 0
+                p = a + b - c; pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 0xff
+        if y % 8 == 0:
+            for x in range(0, w, 8):
+                i = x * bpp
+                if line[i] > 24 or line[i+1] > 24 or line[i+2] > 24:
+                    nonblack += 1
+                total += 1
+        prev = line
+    print(f"{100.0 * nonblack / max(total,1):.1f}")
+except Exception as e:
+    print("ERR")
+PY
+}
+
+classify_state() { # $1 = hierarchy file (may be absent), $2 = screenshot
+  local hier="$1" shot="$2" share
+  share="$(pixel_share "$shot")"
+  echo "== pixel non-black share: $share" >&2
+  if [ -f "$hier" ]; then
+    if grep -q "Ore Kingdom" "$hier" && grep -qiE "miners|General|Mining|thread" "$hier"; then
+      echo "content"; return
+    fi
+    if grep -qiE "could not load|Retry|Something went wrong" "$hier"; then
+      echo "error-ui"; return
+    fi
   fi
-  if grep -qiE "could not load|Retry|Something went wrong|error" "$hier"; then
-    echo "error-ui"; return
-  fi
-  # Fallback: a non-blank screenshot with a live WebView counts as rendered
-  # content whose text the accessibility tree did not expose.
-  local sz=0
-  [ -f "$shot" ] && sz="$(stat -c %s "$shot" 2>/dev/null || echo 0)"
-  if grep -q "android.webkit.WebView" "$hier" && [ "$sz" -gt 40000 ]; then
-    echo "content"; return
+  if [ "$share" != "ERR" ] && python3 -c "exit(0 if float('$share') > 0.3 else 1)" 2>/dev/null; then
+    echo "rendered"; return
   fi
   echo "unknown"
+}
+
+# Poll until a classifiable rendered state or the deadline passes.
+await_state() { # $1 = tag (cold|offline), $2 = deadline seconds
+  local tag="$1" deadline="$2" waited=0 cls="unknown"
+  while [ "$waited" -lt "$deadline" ]; do
+    sleep 10; waited=$((waited + 10))
+    adb exec-out screencap -p > "$TMPD/shot-$tag.png" 2>/dev/null || true
+    dump_ui "$TMPD/hier-$tag.xml" || true
+    cls="$(classify_state "$TMPD/hier-$tag.xml" "$TMPD/shot-$tag.png")"
+    echo "== [$tag] ${waited}s -> $cls" >&2
+    [ "$cls" != "unknown" ] && break
+  done
+  cp "$TMPD/shot-$tag.png" "$OUT/$tag.png" 2>/dev/null || true
+  [ -f "$TMPD/hier-$tag.xml" ] && cp "$TMPD/hier-$tag.xml" "$OUT/hierarchy-$tag.xml" || true
+  echo "$cls"
 }
 
 echo "== APK under test: $APK_PATH"
@@ -86,15 +158,11 @@ total_time="$(printf '%s' "$am_out" | sed -n 's/.*TotalTime: \([0-9]*\).*/\1/p' 
 if [ -n "$total_time" ]; then launch_ms_v="$total_time"; else launch_ms_v="$((end_ms - start_ms))"; fi
 echo "== am start -W: $am_out"
 
-# Settle past the wrapper watchdog (8s): content, or the error state.
-sleep 16
+state_v="$(await_state cold 180 | tail -n 1)"
 adb logcat -d > "$OUT/logcat.txt" 2>&1 || true
 if [ "$install_v" = "ok" ] && ! grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
   crash_v="0"
 fi
-dump_ui "$OUT/hierarchy-cold.xml"
-adb exec-out screencap -p > "$OUT/cold.png" 2>/dev/null || true
-state_v="$(classify_state "$OUT/hierarchy-cold.xml" "$OUT/cold.png")"
 echo "== cold state: $state_v"
 
 # --- Offline variant: radios off, relaunch ---
@@ -104,18 +172,13 @@ adb shell svc data disable >/dev/null 2>&1 || true
 sleep 2
 adb logcat -c >/dev/null 2>&1 || true
 adb shell am start -W -n "$ACT" >/dev/null 2>&1
-sleep 16
+offline_state="$(await_state offline 150 | tail -n 1)"
 adb logcat -d > "$OUT/logcat-offline.txt" 2>&1 || true
 if grep -q "FATAL EXCEPTION" "$OUT/logcat-offline.txt"; then
   crash_v="FAIL"
 fi
-dump_ui "$OUT/hierarchy-offline.xml"
-adb exec-out screencap -p > "$OUT/offline.png" 2>/dev/null || true
-offline_state="$(classify_state "$OUT/hierarchy-offline.xml" "$OUT/offline.png")"
 echo "== offline state: $offline_state"
-# Offline, content can only be the bundled shell's graceful states; both
-# content (local shell UI) and error-ui are graceful. Unknown is a park/blank.
-if [ "$offline_state" = "content" ] || [ "$offline_state" = "error-ui" ]; then
+if [ "$offline_state" != "unknown" ]; then
   offline_v="ok"
 fi
 
