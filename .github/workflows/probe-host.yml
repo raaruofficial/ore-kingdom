@@ -1,0 +1,13 @@
+name: probe-host (one-off diagnostic)
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe the production host from the runner
+        run: |
+          echo "== healthz:"; curl -sv -m 15 https://orekingdom.137-184-143-128.sslip.io/healthz 2>&1 | tail -25
+          echo "== root status:"; curl -s -m 15 -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' https://orekingdom.137-184-143-128.sslip.io/
+          echo "== actions POST:"; curl -s -m 15 -X POST https://orekingdom.137-184-143-128.sslip.io/actions -H 'content-type: application/json' -d '{"action":"getPublicConfig","args":{}}' | head -c 300; echo
+          echo "== dns:"; getent hosts orekingdom.137-184-143-128.sslip.io || nslookup orekingdom.137-184-143-128.sslip.io 8.8.8.8 | tail -4
