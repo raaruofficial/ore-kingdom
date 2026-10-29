@@ -207,7 +207,64 @@ st="$(alive_and_fg)"
 [ "$(fatal_since "$OUT/logcat-a.txt")" = "0" ] || fail "phase A: FATAL for $PKG in logcat"
 echo "phase_a_share=$share phase_a_state=$st retried=$retried" >> "$OUT/verdict.txt"
 
+probe_pixel() { # echoes "R,G,B" at (0.5w, $2 fraction of h) of png $1
+  python3 - "$1" "$2" <<'PY'
+import sys, zlib, struct
+try:
+    data = open(sys.argv[1], 'rb').read()
+    frac = float(sys.argv[2])
+    pos = 8; idat = b''; w = h = ctype = None
+    while pos < len(data):
+        ln = struct.unpack('>I', data[pos:pos+4])[0]; typ = data[pos+4:pos+8]
+        if typ == b'IHDR':
+            w, h, depth, ctype = struct.unpack('>IIBB', data[pos+8:pos+18])
+            assert depth == 8 and ctype in (2, 6)
+        elif typ == b'IDAT':
+            idat += data[pos+8:pos+8+ln]
+        pos += 12 + ln
+    raw = zlib.decompress(idat)
+    bpp = 4 if ctype == 6 else 3
+    stride = w * bpp
+    prev = bytearray(stride)
+    target_y = int(h * frac); x = w // 2
+    off = 0
+    for y in range(h):
+        filt = raw[off]; line = bytearray(raw[off+1:off+1+stride]); off += 1 + stride
+        if filt == 1:
+            for i in range(bpp, stride): line[i] = (line[i] + line[i-bpp]) & 0xff
+        elif filt == 2:
+            for i in range(stride): line[i] = (line[i] + prev[i]) & 0xff
+        elif filt == 3:
+            for i in range(stride):
+                a = line[i-bpp] if i >= bpp else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 0xff
+        elif filt == 4:
+            for i in range(stride):
+                a = line[i-bpp] if i >= bpp else 0; b = prev[i]; c = prev[i-bpp] if i >= bpp else 0
+                p = a + b - c; pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 0xff
+        if y == target_y:
+            i = x * bpp
+            print(f"{line[i]},{line[i+1]},{line[i+2]}")
+            break
+        prev = line
+except Exception:
+    print("ERR")
+PY
+}
+
 # ---------------- Phase B: exercise every nav destination -------------
+# If phase A ended on an error surface (in-page or native), there are
+# no destinations to exercise: the gold Retry button sits at a fixed
+# spot (0.5w, 0.20h) in both surfaces. Probing it keeps the API 28
+# leg — whose census misreads its PNGs — honest: skip, don't fake.
+PX="$(probe_pixel "$OUT/phase-a.png" 0.20)"
+PR="${PX%%,*}"; REST="${PX#*,}"; PG="${REST%%,*}"; PB="${REST##*,}"
+if [ "$PR" != "ERR" ] && [ "${PR:-0}" -gt 150 ] 2>/dev/null && [ "${PG:-0}" -gt 100 ] 2>/dev/null && [ "${PB:-0}" -lt 110 ] 2>/dev/null; then
+  echo "nav_phase=SKIPPED (phase A ended on an error surface; no destinations exist in that state)" >> "$OUT/verdict.txt"
+  note "phase B skipped: error surface detected (probe pixel $PX)"
+else
 # Bottom nav: 6 destinations; labels read from the live build (Forum,
 # Motherlode, Search, Alerts, Safe, Profile). The tap row is anchored
 # to the APP WINDOW's bottom edge (the window excludes the system bar
@@ -233,6 +290,8 @@ for i in 0 1 2 3 4 5; do
   [ "$st" = "ok" ] || fail "nav $i: app state = $st (ejected or dead)"
   [ "$nf" = "0" ] || fail "nav $i: FATAL for $PKG in logcat"
 done
+
+fi
 
 # ---------------- Phase C: WebView provider disabled ------------------
 WVPKG="$(adb shell cmd webviewupdate getCurrentWebViewPackage 2>/dev/null | sed -n 's/.*(\(.*\),.*/\1/p' | head -n 1 | tr -d '\r ')"
@@ -288,7 +347,11 @@ if [ "$WHO" = "root" ]; then
   sleep 6
   RPIDS=""
   for k in 1 2 3 4 5 6; do
-    RP="$(adb shell ps -A -o PID,NAME 2>/dev/null | grep "$PKG" | grep -i sandboxed | awk '{print $1}' | head -n 1 | tr -d '\r')"
+    # The WebView renderer runs under the PROVIDER's identity
+    # (com.google.android.webview:sandboxed_process…), not ours —
+    # v3's package filter found nothing and killed nothing. On this
+    # rig the only sandboxed renderer present is ours.
+    RP="$(adb shell ps -A -o PID,NAME 2>/dev/null | grep -i sandboxed | awk '{print $1}' | head -n 1 | tr -d '\r')"
     if [ -n "$RP" ]; then
       case " $RPIDS " in *" $RP "*) ;; *) RPIDS="$RPIDS $RP" ;; esac
       note "[D] kill $k: renderer pid $RP"
