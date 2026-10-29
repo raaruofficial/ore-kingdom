@@ -112,7 +112,12 @@ dismiss_anr() { # tap "Wait" if a system ANR dialog is up; record if it is a CRA
 shot() { adb exec-out screencap -p > "$1" 2>/dev/null || true; }
 
 fatal_since() { # $1 = logcat file; echoes count of our-process FATAL markers
-  grep -c "Process: $PKG" "$1" 2>/dev/null || echo 0
+  # v1 bug: `grep -c ... || echo 0` printed the count AND the fallback
+  # (grep -c exits 1 on zero matches), producing "0\n0" != "0" and 13
+  # phantom FATAL failures across the first run. The counts were 0.
+  local c
+  c="$(grep -c "Process: $PKG" "$1" 2>/dev/null || true)"
+  echo "${c:-0}"
 }
 
 capture_stacks() { # $1 = logcat file, $2 = label
@@ -122,11 +127,24 @@ capture_stacks() { # $1 = logcat file, $2 = label
 }
 
 alive_and_fg() { # echoes ok|dead|background
-  local pid top
+  # v2 probe: mCurrentFocus exists across API 28-35; v1's
+  # topResumedActivity token does not exist on API 28 (it is
+  # ResumedActivity there), which read a healthy app as "background"
+  # for an entire leg.
+  local pid focus
   pid="$(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
   [ -z "$pid" ] && { echo "dead"; return; }
-  top="$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 "topResumedActivity" || true)"
-  case "$top" in *"$PKG"*) echo "ok" ;; *) echo "background" ;; esac
+  focus="$(adb shell dumpsys window windows 2>/dev/null | grep -m1 "mCurrentFocus" || true)"
+  if [ -z "$focus" ]; then
+    focus="$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E "topResumedActivity|ResumedActivity" || true)"
+  fi
+  case "$focus" in *"$PKG"*) echo "ok" ;; *) echo "background" ;; esac
+}
+
+app_window_bottom() { # echoes the app window's bottom edge in px, or screen height
+  local hier="$1" b
+  b="$(grep -oE 'bounds="\[0,0\]\[[0-9]+,[0-9]+\]"' "$hier" 2>/dev/null | head -n 1 | grep -oE '[0-9]+' | tail -n 1)"
+  if [ -n "$b" ] && [ "$b" -gt 0 ] 2>/dev/null; then echo "$b"; else echo "$SH"; fi
 }
 
 echo "== leg: $LEG; APK: $APK_PATH"
@@ -137,6 +155,13 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 dump_ui "$TMPD/hier-boot.xml" && dismiss_anr "$TMPD/hier-boot.xml" || true
+# Gesture navigation (API 29+) frees the bottom strip: with the
+# 3-button bar, v1's tap row overlapped the system buttons and one
+# tap hit BACK, ejecting to the launcher — the alert's symptom,
+# produced by the harness. Harmless no-op where unsupported.
+adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural >/dev/null 2>&1 || true
+sleep 2
+adb shell cmd webviewupdate getCurrentWebViewPackage > "$OUT/webview-provider.txt" 2>&1 || true
 
 # ---------------- Phase A: fresh install + first launch ----------------
 if [ -n "$APK_PATH" ] && [ -f "$APK_PATH" ] && adb install -r "$APK_PATH" > "$TMPD/install.log" 2>&1; then
@@ -174,6 +199,7 @@ while [ "$waited" -lt 150 ]; do
 done
 cp "$TMPD/a.png" "$OUT/phase-a.png" 2>/dev/null || true
 [ -f "$TMPD/a.xml" ] && cp "$TMPD/a.xml" "$OUT/hierarchy-a.xml" || true
+share="$(pixel_share "$OUT/phase-a.png")"  # final-frame share, from the saved file
 adb logcat -d > "$OUT/logcat-a.txt" 2>&1 || true
 capture_stacks "$OUT/logcat-a.txt" "phase A"
 st="$(alive_and_fg)"
@@ -183,9 +209,12 @@ echo "phase_a_share=$share phase_a_state=$st retried=$retried" >> "$OUT/verdict.
 
 # ---------------- Phase B: exercise every nav destination -------------
 # Bottom nav: 6 destinations; labels read from the live build (Forum,
-# Motherlode, Search, Alerts, Safe, Profile). Tap row sits inside the
-# app's edge-to-edge bottom bar.
-TY=$((SH * 962 / 1000))
+# Motherlode, Search, Alerts, Safe, Profile). The tap row is anchored
+# to the APP WINDOW's bottom edge (the window excludes the system bar
+# on API 28 and includes it edge-to-edge on 35) minus a small inset.
+WB="$(app_window_bottom "$OUT/hierarchy-a.xml")"
+TY=$((WB - SH * 22 / 1000))
+note "nav tap row: window_bottom=$WB ty=$TY"
 for i in 0 1 2 3 4 5; do
   TX=$((SW * (2 * i + 1) / 12))
   adb logcat -c >/dev/null 2>&1 || true
@@ -209,12 +238,23 @@ done
 WVPKG="$(adb shell cmd webviewupdate getCurrentWebViewPackage 2>/dev/null | sed -n 's/.*(\(.*\),.*/\1/p' | head -n 1 | tr -d '\r ')"
 [ -n "$WVPKG" ] || WVPKG="com.google.android.webview"
 note "WebView provider: $WVPKG"
-adb shell pm disable "$WVPKG" >/dev/null 2>&1 || note "pm disable $WVPKG failed (may be a system-protected package)"
+# v1 used `pm disable`, which did NOT remove the provider (the app
+# rendered the full forum afterward) — phase C tested nothing. v2
+# removes the provider for user 0 and VERIFIES no provider remains
+# current; if one still does, the phase records INCONCLUSIVE.
+adb shell pm uninstall --user 0 "$WVPKG" > "$TMPD/nowv-uninstall.log" 2>&1 || true
+adb shell cmd webviewupdate getCurrentWebViewPackage > "$OUT/webview-provider-after.txt" 2>&1 || true
+if grep -q "$WVPKG" "$OUT/webview-provider-after.txt"; then
+  echo "nowv_phase=INCONCLUSIVE (provider still current after uninstall attempt)" >> "$OUT/verdict.txt"
+  note "phase C inconclusive: provider still current"
+fi
 adb shell am force-stop "$PKG" >/dev/null 2>&1 || true
 adb logcat -c >/dev/null 2>&1 || true
 adb shell am start -W -n "$ACT" > "$TMPD/am-nowv.log" 2>&1 || true
 sleep 12
 shot "$OUT/nowv.png"; dump_ui "$TMPD/nowv.xml" || true
+sleep 8
+shot "$OUT/nowv2.png"
 if [ -f "$TMPD/nowv.xml" ]; then
   dismiss_anr "$TMPD/nowv.xml"; rc=$?
   [ "$rc" = "2" ] && fail "phase C: system 'has stopped' dialog with WebView disabled"
@@ -230,7 +270,8 @@ elif [ "$st" = "dead" ]; then
   # A clean exit with no FATAL is a degradation, recorded, not a crash.
   echo "phase C note: process exited without FATAL (clean-exit degradation)" >> "$OUT/verdict.txt"
 fi
-adb shell pm enable "$WVPKG" >/dev/null 2>&1 || true
+adb shell cmd package install-existing --user 0 "$WVPKG" >/dev/null 2>&1 \
+  || adb shell pm enable "$WVPKG" >/dev/null 2>&1 || true
 
 # ---------------- Verdict ----------------------------------------------
 echo "failures=$FAILS" >> "$OUT/verdict.txt"
