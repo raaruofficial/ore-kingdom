@@ -19,6 +19,14 @@
 #
 # Evidence lands in ./verify-evidence/ (uploaded by the workflow).
 # The script exits non-zero if any line is FAIL: a red job blocks the seal.
+#
+# ANR-dialog cure (post-deploy runs 1-2, 2026-10-28): the emulator's
+# LAUNCHER (Quickstep) ANR'd under load and its modal "isn't responding"
+# dialog sat over the app for entire runs — the pixel census then read
+# the dialog's light card as "rendered" (two false passes, both disowned
+# on firsthand screenshot reads). The classifier now treats an ANR
+# dialog as its own non-terminal class, and the poll loop dismisses it
+# by tapping "Wait" (the system app behind it is not ours to close).
 set -u
 
 PKG="com.raaru.orekingdom"
@@ -103,11 +111,31 @@ except Exception as e:
 PY
 }
 
+dismiss_anr() { # $1 = hierarchy file; taps "Wait" on an ANR dialog
+  local hier="$1" line bounds nums x y
+  [ -f "$hier" ] || return 1
+  grep -q "isn't responding" "$hier" || return 1
+  line="$(grep -oE '<node[^>]*text="Wait"[^>]*>' "$hier" | head -n 1)"
+  bounds="$(printf '%s' "$line" | grep -oE '\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]' | head -n 1)"
+  [ -n "$bounds" ] || return 1
+  nums="$(printf '%s' "$bounds" | tr -cs '0-9' ' ')"
+  # shellcheck disable=SC2086
+  set -- $nums
+  x=$(( ($1 + $3) / 2 )); y=$(( ($2 + $4) / 2 ))
+  echo "== ANR dialog present; tapping Wait at $x,$y" >&2
+  adb shell input tap "$x" "$y" >/dev/null 2>&1 || true
+  sleep 3
+  return 0
+}
+
 classify_state() { # $1 = hierarchy file (may be absent), $2 = screenshot
   local hier="$1" shot="$2" share
   share="$(pixel_share "$shot")"
   echo "== pixel non-black share: $share" >&2
   if [ -f "$hier" ]; then
+    if grep -q "isn't responding" "$hier"; then
+      echo "anr"; return
+    fi
     if grep -q "Ore Kingdom" "$hier" && grep -qiE "miners|General|Mining|thread" "$hier"; then
       echo "content"; return
     fi
@@ -130,7 +158,10 @@ await_state() { # $1 = tag (cold|offline), $2 = deadline seconds
     dump_ui "$TMPD/hier-$tag.xml" || true
     cls="$(classify_state "$TMPD/hier-$tag.xml" "$TMPD/shot-$tag.png")"
     echo "== [$tag] ${waited}s -> $cls" >&2
-    [ "$cls" != "unknown" ] && break
+    case "$cls" in
+      content|error-ui|rendered) break ;;
+      anr) dismiss_anr "$TMPD/hier-$tag.xml" || true ;;
+    esac
   done
   cp "$TMPD/shot-$tag.png" "$OUT/$tag.png" 2>/dev/null || true
   [ -f "$TMPD/hier-$tag.xml" ] && cp "$TMPD/hier-$tag.xml" "$OUT/hierarchy-$tag.xml" || true
@@ -144,6 +175,9 @@ for _ in $(seq 1 60); do
   [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
   sleep 5
 done
+# A boot-time system ANR dialog (the Quickstep flake) must not ride into
+# the run: dump once and dismiss before anything launches.
+dump_ui "$TMPD/hier-boot.xml" && dismiss_anr "$TMPD/hier-boot.xml" || true
 
 # --- Install on the fresh AVD (first-run state by construction) ---
 if [ -n "$APK_PATH" ] && [ -f "$APK_PATH" ] && adb install -r "$APK_PATH" > "$TMPD/install.log" 2>&1; then
@@ -184,9 +218,9 @@ if grep -q "Process: $PKG" "$OUT/logcat-offline.txt"; then
   crash_v="FAIL"
 fi
 echo "== offline state: $offline_state"
-if [ "$offline_state" != "unknown" ]; then
-  offline_v="ok"
-fi
+case "$offline_state" in
+  content|error-ui|rendered) offline_v="ok" ;;
+esac
 
 # --- Verdict ---
 {
@@ -200,7 +234,7 @@ fi
 cat "$OUT/verdict.txt"
 
 if [ "$install_v" != "ok" ] || [ "$crash_v" != "0" ] || [ "$launch_ms_v" = "FAIL" ] \
-   || [ "$state_v" = "unknown" ] || [ "$offline_v" != "ok" ]; then
+   || [ "$state_v" = "unknown" ] || [ "$state_v" = "anr" ] || [ "$offline_v" != "ok" ]; then
   echo "verify-cold-run: FAIL"
   exit 1
 fi
