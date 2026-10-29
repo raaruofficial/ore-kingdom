@@ -273,6 +273,45 @@ fi
 adb shell cmd package install-existing --user 0 "$WVPKG" >/dev/null 2>&1 \
   || adb shell pm enable "$WVPKG" >/dev/null 2>&1 || true
 
+# ---------------- Phase D: renderer-kill barrage (v0.1.1 budget) ------
+# The render-recovery budget (3 reloads / 60 s, then the native error
+# surface) is runtime-provable only by killing the WebView renderer,
+# which needs root. Emulator images usually allow `adb root`; where
+# they do not, the phase records SKIP and the budget stands verified
+# by construction (source), at that grade.
+adb logcat -c >/dev/null 2>&1 || true
+adb root >/dev/null 2>&1 || true
+sleep 2
+WHO="$(adb shell whoami 2>/dev/null | tr -d '\r')"
+if [ "$WHO" = "root" ]; then
+  adb shell am start -n "$ACT" >/dev/null 2>&1 || true
+  sleep 6
+  RPIDS=""
+  for k in 1 2 3 4 5 6; do
+    RP="$(adb shell ps -A -o PID,NAME 2>/dev/null | grep "$PKG" | grep -i sandboxed | awk '{print $1}' | head -n 1 | tr -d '\r')"
+    if [ -n "$RP" ]; then
+      case " $RPIDS " in *" $RP "*) ;; *) RPIDS="$RPIDS $RP" ;; esac
+      note "[D] kill $k: renderer pid $RP"
+      adb shell kill -9 "$RP" >/dev/null 2>&1 || true
+    else
+      note "[D] kill $k: no renderer process found"
+    fi
+    sleep 5
+  done
+  shot "$OUT/phase-d.png"
+  adb logcat -d > "$OUT/logcat-d.txt" 2>&1 || true
+  capture_stacks "$OUT/logcat-d.txt" "phase D"
+  st="$(alive_and_fg)"
+  nf="$(fatal_since "$OUT/logcat-d.txt")"
+  NRP="$(printf '%s' "$RPIDS" | wc -w)"
+  echo "phase_d_root=yes phase_d_state=$st phase_d_fatal=$nf phase_d_distinct_renderers=$NRP" >> "$OUT/verdict.txt"
+  [ "$st" = "ok" ] || fail "phase D: app state after renderer barrage = $st"
+  [ "$nf" = "0" ] || fail "phase D: FATAL for $PKG during renderer barrage"
+  adb unroot >/dev/null 2>&1 || true
+else
+  echo "phase_d=SKIP (adb root unavailable; budget verified by construction)" >> "$OUT/verdict.txt"
+fi
+
 # ---------------- Verdict ----------------------------------------------
 echo "failures=$FAILS" >> "$OUT/verdict.txt"
 cat "$OUT/verdict.txt"

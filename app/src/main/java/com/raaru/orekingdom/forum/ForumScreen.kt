@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
+import android.view.View
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -44,7 +46,11 @@ import java.io.ByteArrayInputStream
  *  - a main-frame load failure shows a native error state with a retry
  *    action — never a blank or endlessly-loading WebView;
  *  - a renderer crash reloads the entry document instead of leaving a
- *    dead view.
+ *    dead view, under a recovery budget (3 per 60 s, v0.1.1): beyond
+ *    the budget the native error state takes over — no recreate loop;
+ *  - if the WebView cannot even be constructed (no usable provider),
+ *    the native error state shows instead of an uncaught throw
+ *    (v0.1.1; FUN-001 estate cure parity with HAUNT's N2/N3).
  * The client's own in-page error handling is the client rebuild's layer and
  * is tracked separately in the build record.
  */
@@ -94,6 +100,7 @@ fun ForumScreen() {
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
+          try {
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
@@ -101,6 +108,10 @@ fun ForumScreen() {
                 settings.allowContentAccess = false
                 addJavascriptInterface(ActionsBridge(), ForumConfig.ACTIONS_BRIDGE_NAME)
                 webViewClient = object : WebViewClient() {
+
+                    // Renderer-recovery budget (v0.1.1): timestamps of
+                    // renderer deaths inside the trailing 60 s window.
+                    private val renderDeaths = ArrayDeque<Long>()
 
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                         // The client bundle loads as a deferred module script,
@@ -148,6 +159,10 @@ fun ForumScreen() {
                         error: WebResourceError?
                     ) {
                         if (request?.isForMainFrame == true) {
+                            Log.e(
+                                "OreKingdom",
+                                "Main-frame load error ${error?.errorCode}: ${error?.description}"
+                            )
                             loadError = error?.description?.toString() ?: "Load failed."
                         }
                     }
@@ -156,6 +171,21 @@ fun ForumScreen() {
                         view: WebView?,
                         detail: RenderProcessGoneDetail?
                     ): Boolean {
+                        val now = System.currentTimeMillis()
+                        while (renderDeaths.isNotEmpty() && now - renderDeaths.first() > 60_000L) {
+                            renderDeaths.removeFirst()
+                        }
+                        renderDeaths.addLast(now)
+                        Log.e(
+                            "OreKingdom",
+                            "Renderer gone (didCrash=${detail?.didCrash()}), recovery ${renderDeaths.size}/3 in window"
+                        )
+                        if (renderDeaths.size > 3) {
+                            // Budget exhausted: the native error surface
+                            // takes over; no further recreation.
+                            loadError = "The forum view stopped responding."
+                            return true
+                        }
                         webView.value?.loadUrl(ForumConfig.ENTRY_URL)
                         return true
                     }
@@ -204,6 +234,16 @@ fun ForumScreen() {
                 loadUrl(ForumConfig.ENTRY_URL)
                 webView.value = this
             }
+          } catch (t: Throwable) {
+            // No usable WebView provider (or any construction fault):
+            // land on the native error surface — never crash here.
+            Log.e("OreKingdom", "WebView construction failed", t)
+            View(ctx).also { placeholder ->
+                placeholder.post {
+                    loadError = "The forum view could not start on this device."
+                }
+            }
+          }
         }
     )
 }
