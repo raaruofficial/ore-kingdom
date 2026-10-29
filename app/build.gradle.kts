@@ -16,8 +16,8 @@ android {
         applicationId = "com.raaru.orekingdom"
         minSdk = 28
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
 
         // THE single named config point for the backend host: the actions
         // API base URL (see ForumConfig). Override at build time with the

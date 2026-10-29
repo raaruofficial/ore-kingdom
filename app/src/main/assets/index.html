@@ -214,12 +214,28 @@
           }
           window.__okBooted = function () { return booted; };
           var bootTick = setInterval(function () {
-            if (document.querySelector(".app-shell") && !document.querySelector("section.gate-layout")) {
+            // Any bundle-rendered root counts as booted: the forum
+            // shell and the sign-in gate are both working app surfaces
+            // (neither exists in the static markup).
+            if (document.querySelector(".app-shell") || document.querySelector("section.gate-layout")) {
               booted = true;
               clearInterval(bootTick);
+              // KFC-002 latch cure (2026-10-29): a late boot un-shows
+              // a watchdog surface that fired while the bundle was
+              // still mounting — the surface and its armed handlers
+              // must never outlive the boot they were guarding.
+              if (errorShown) {
+                var errBox = document.getElementById("ok-error");
+                if (errBox) errBox.hidden = true;
+                errorShown = false;
+              }
             }
           }, 400);
-          setTimeout(function () { clearInterval(bootTick); if (!booted) showError(); }, BOOT_MS);
+          // The deadline shows the surface for a dead bundle; the
+          // poll deliberately outlives it so a late boot still
+          // disarms (hard stop at 120 s bounds a truly dead page).
+          setTimeout(function () { if (!booted) showError(); }, BOOT_MS);
+          setTimeout(function () { clearInterval(bootTick); }, 120000);
           window.addEventListener("error", function (ev) {
             if (booted) return;
             // Script errors are fatal to the boot; resource errors (a font or
