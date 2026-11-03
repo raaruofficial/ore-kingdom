@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import com.raaru.orekingdom.data.CacheStore
 import com.raaru.orekingdom.data.HostApi
+import com.raaru.orekingdom.data.PaymentStore
 import com.raaru.orekingdom.data.SessionStore
 import com.raaru.orekingdom.data.SolanaRpc
 import com.raaru.orekingdom.wallet.WalletManager
@@ -32,6 +33,8 @@ class OreKingdomApp : Application() {
         private set
     lateinit var cacheStore: CacheStore
         private set
+    lateinit var paymentStore: PaymentStore
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -40,6 +43,7 @@ class OreKingdomApp : Application() {
         solanaRpc = SolanaRpc()
         sessionStore = SessionStore(this)
         cacheStore = CacheStore(this)
+        paymentStore = PaymentStore(this)
         // Restore the MWA auth token for quiet reauthorization; the
         // wallet identity itself is re-proven by SIWS at sign-in (B2).
         walletManager.persistedAuthToken = sessionStore.authToken

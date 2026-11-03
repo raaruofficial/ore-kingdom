@@ -24,9 +24,13 @@ import com.raaru.orekingdom.ui.ForumViewModel
 import com.raaru.orekingdom.ui.screens.CatchUpScreen
 import com.raaru.orekingdom.ui.screens.ComposerScreen
 import com.raaru.orekingdom.ui.screens.InboxScreen
+import com.raaru.orekingdom.ui.screens.JoinScreen
+import com.raaru.orekingdom.ui.screens.PinBuyScreen
+import com.raaru.orekingdom.ui.screens.PrestigeScreen
 import com.raaru.orekingdom.ui.screens.SignInScreen
 import com.raaru.orekingdom.ui.screens.ThreadListScreen
 import com.raaru.orekingdom.ui.screens.ThreadScreen
+import com.raaru.orekingdom.ui.screens.TipScreen
 import com.raaru.orekingdom.ui.theme.OreKingdomTheme
 import com.solana.mobilewalletadapter.clientlib.ActivityResultSender
 
@@ -104,6 +108,22 @@ class MainActivity : ComponentActivity() {
                         composable("signin") { SignInScreen(navController, vm, walletSender) }
                         composable("inbox") { InboxScreen(navController, vm) }
                         composable("catchup") { CatchUpScreen(navController, vm) }
+                        composable("join") { JoinScreen(navController, vm, walletSender) }
+                        composable("prestige") { PrestigeScreen(navController, vm, walletSender) }
+                        composable("pinbuy") { PinBuyScreen(navController, vm, walletSender) }
+                        composable(
+                            "tip/{threadId}/{replyId}",
+                            arguments = listOf(
+                                navArgument("threadId") { type = NavType.IntType },
+                                navArgument("replyId") { type = NavType.IntType }
+                            )
+                        ) { entry ->
+                            TipScreen(
+                                navController, vm, walletSender,
+                                entry.arguments?.getInt("threadId") ?: 0,
+                                entry.arguments?.getInt("replyId") ?: -1
+                            )
+                        }
                         composable(
                             "compose/{categoryId}",
                             arguments = listOf(navArgument("categoryId") { type = NavType.IntType })

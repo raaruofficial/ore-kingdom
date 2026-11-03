@@ -43,7 +43,11 @@ data class Category(
     val slug: String,
     val name: String,
     val description: String,
-    val count: Int
+    val count: Int,
+    /** The VIP-board marker the wrapper serves on category rows
+     *  (forumReadTransform, M2 host fixes). Tolerant: absent on an
+     *  older host, where the slug fallback in [vipCategory] applies. */
+    val isVip: Boolean = false
 ) {
     companion object {
         fun fromJson(o: JSONObject) = Category(
@@ -51,7 +55,8 @@ data class Category(
             slug = o.optString("slug"),
             name = o.optString("name"),
             description = o.optString("description"),
-            count = o.optInt("count")
+            count = o.optInt("count"),
+            isVip = o.optBoolean("isVip")
         )
     }
 }
@@ -114,7 +119,13 @@ data class ForumPayload(
     val locked: Boolean,
     val member: Member?,
     val categories: List<Category>,
-    val threads: List<ForumThread>
+    val threads: List<ForumThread>,
+    /** Whether the CALLER holds prestige, served on the listForum
+     *  payload by the M2 host fixes (forumReadTransform). Null when
+     *  the host did not serve it — the composer then attempts the
+     *  session-free post and lets the gate decide, never charging
+     *  toward a VIP-board post on an unknown holder state. */
+    val callerPrestige: Boolean? = null
 ) {
     companion object {
         fun fromJson(o: JSONObject): ForumPayload {
@@ -128,6 +139,11 @@ data class ForumPayload(
                 },
                 threads = (0 until (threads?.length() ?: 0)).mapNotNull {
                     threads?.optJSONObject(it)?.let { t -> ForumThread.fromJson(t) }
+                },
+                callerPrestige = if (o.has("callerPrestige") && !o.isNull("callerPrestige")) {
+                    o.optBoolean("callerPrestige")
+                } else {
+                    null
                 }
             )
         }
@@ -400,12 +416,13 @@ sealed interface PinSlot {
 }
 
 /**
- * Derives the slot strip from the one pin read the host serves: the
- * full (unfiltered) listForum payload, whose threads carry
- * isPaidPinned / paidPinEndsAt. There is no slot-state read on the
- * host (M2_CLIENT_REPORT flags it); this derivation uses only served
- * data — active pins first by soonest end, padded with vacant slots
- * to the ruled capacity.
+ * Derives the slot strip from the full (unfiltered) listForum
+ * payload, whose threads carry isPaidPinned / paidPinEndsAt. Since
+ * the M2 host fixes the host also serves the getPinSlots slot-state
+ * read, which is the spotlight's source of record in M3; this
+ * derivation remains as the fallback for when that read fails, and
+ * like the read it uses only served data — active pins first by
+ * soonest end, padded with vacant slots to the ruled capacity.
  */
 fun pinSlots(payload: ForumPayload): List<PinSlot> {
     val active = payload.threads
@@ -436,3 +453,12 @@ fun shortDate(iso: String?): String {
     if (iso.isNullOrBlank()) return ""
     return iso.substringBefore("T").ifBlank { iso }
 }
+
+/** SKR base units (6dp) -> the grouped display form ("1,000 SKR",
+ *  "0.5 SKR"). Delegates to the money layer so every surface renders
+ *  a served amount the same way. */
+fun formatSkr(baseUnits: Long): String =
+    com.raaru.orekingdom.util.formatAssetAmount(
+        java.math.BigInteger.valueOf(baseUnits),
+        com.raaru.orekingdom.util.Assets.SKR
+    )

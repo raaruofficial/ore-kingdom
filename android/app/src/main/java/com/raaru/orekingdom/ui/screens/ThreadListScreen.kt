@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.raaru.orekingdom.data.ForumPayload
+import com.raaru.orekingdom.data.ServedPinSlot
 import com.raaru.orekingdom.data.pinSlots
 import com.raaru.orekingdom.data.shortDate
 import com.raaru.orekingdom.data.vipCategory
@@ -48,9 +49,11 @@ import com.solana.mobilewalletadapter.clientlib.ActivityResultSender
  * the ordering is the host's, maintained wrapper-side). Boards are
  * filter views over the one payload (All / Commercial / per-board);
  * the VIP board is the gated surface among them. Above the feed: the
- * pin spotlight in rotation (vacant slots as the house ad) and the
- * Unanswered Rail (R8). On open, a signed-in member with news is
- * taken to the Catch-Up (R9) exactly once per open-with-news.
+ * parked-payments card (R4, when any exist), the pin spotlight in
+ * rotation (state from the getPinSlots read; vacant slots as the
+ * house ad, whose action opens the pin purchase) and the Unanswered
+ * Rail (R8). On open, a signed-in member with news is taken to the
+ * Catch-Up (R9) exactly once per open-with-news.
  */
 @Composable
 fun ThreadListScreen(
@@ -64,7 +67,11 @@ fun ThreadListScreen(
     val riverView by vm.riverView.collectAsState()
     val unreadCount by vm.unreadCount.collectAsState()
     val catchUpState by vm.catchUpState.collectAsState()
-    var showPinExplainer by remember { mutableStateOf(false) }
+    val servedPinSlots by vm.pinSlots.collectAsState()
+    val parkedFlows by vm.parkedFlows.collectAsState()
+    val paying by vm.paying.collectAsState()
+    var resumeProgress by remember { mutableStateOf<String?>(null) }
+    var resumeMessage by remember { mutableStateOf<String?>(null) }
     var catchUpPresented by remember { mutableStateOf(false) }
 
     // R9: on open with a signed-in member, ask the host what's new.
@@ -81,10 +88,6 @@ fun ThreadListScreen(
         if (catchUpState is ForumViewModel.CatchUpState.NoNews) {
             catchUpPresented = false
         }
-    }
-
-    if (showPinExplainer) {
-        PinExplainerDialog(onDismiss = { showPinExplainer = false })
     }
 
     Scaffold(
@@ -170,12 +173,113 @@ fun ThreadListScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                     }
-                    // The pin spotlight renders above the river, from
-                    // the full payload, whatever view is selected.
+                    // R4: parked payments (started earlier, not yet
+                    // settled with the host) are offered for
+                    // completion above the river. Finishing one never
+                    // pays again — it completes what was already paid.
+                    if (member != null && parkedFlows.isNotEmpty()) {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    "Payments to finish",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Started earlier and not yet settled with the host. " +
+                                        "Finishing one completes what you already paid " +
+                                        "for — it never charges again.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                parkedFlows.forEach { flow ->
+                                    Row(
+                                        verticalAlignment =
+                                            androidx.compose.ui.Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            flow.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(
+                                            onClick = {
+                                                resumeMessage = null
+                                                resumeProgress = null
+                                                vm.resumeParked(
+                                                    sender, flow,
+                                                    onProgress = { resumeProgress = it },
+                                                    onDone = { err ->
+                                                        resumeProgress = null
+                                                        resumeMessage = err
+                                                            ?: "Done — that payment is settled."
+                                                    }
+                                                )
+                                            },
+                                            enabled = !paying
+                                        ) { Text("Finish") }
+                                        TextButton(
+                                            onClick = { vm.dismissParked(flow) },
+                                            enabled = !paying
+                                        ) { Text("Dismiss") }
+                                    }
+                                }
+                                resumeProgress?.let {
+                                    Text(it, style = MaterialTheme.typography.bodySmall)
+                                }
+                                resumeMessage?.let {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                    // The pin spotlight renders above the river,
+                    // whatever view is selected. Its state comes from
+                    // the getPinSlots read (the slot-state source of
+                    // record since the M2 host fixes); while that read
+                    // has not answered, the payload derivation fills in.
+                    val spotlightSlots: List<PinSlotUi> = servedPinSlots?.let { served ->
+                        served.slots.mapNotNull { slot ->
+                            when (slot) {
+                                is ServedPinSlot.Filled -> slot.threadId.toIntOrNull()?.let { id ->
+                                    PinSlotUi.Filled(
+                                        threadId = id,
+                                        title = slot.threadTitle,
+                                        endsLabel = formatEpochMs(slot.endsAt)
+                                    )
+                                }
+                                ServedPinSlot.Vacant -> PinSlotUi.Vacant
+                            }
+                        }
+                    } ?: pinSlots(payload).map { slot ->
+                        when (slot) {
+                            is com.raaru.orekingdom.data.PinSlot.Filled -> PinSlotUi.Filled(
+                                threadId = slot.thread.id,
+                                title = slot.thread.title,
+                                endsLabel = shortDate(slot.thread.paidPinEndsAt)
+                            )
+                            com.raaru.orekingdom.data.PinSlot.Vacant -> PinSlotUi.Vacant
+                        }
+                    }
                     PinSpotlight(
-                        slots = pinSlots(payload),
+                        slots = spotlightSlots,
                         onOpenThread = { navController.navigate("thread/$it") },
-                        onTakeSpot = { showPinExplainer = true }
+                        onTakeSpot = {
+                            if (member != null) {
+                                navController.navigate("pinbuy")
+                            } else {
+                                navController.navigate("signin")
+                            }
+                        }
                     )
                     val visibleThreads = when (val view = riverView) {
                         ForumViewModel.RiverView.All -> payload.threads

@@ -225,6 +225,44 @@ object SolanaTx {
     }
 
     /**
+     * System-program transfer of lamports: source (signer, writable),
+     * destination (writable), System program (readonly); data is
+     * discriminator 2 then u64-LE lamports — the legacy system
+     * instruction layout. When a [reference] is attached it rides as
+     * an extra read-only, non-signer account — the Solana Pay
+     * reference convention, and exactly the predicate the host's
+     * SOL-leg verifier checks (the reference appears among the
+     * transaction's instruction accounts, the destination gains
+     * exactly the leg amount).
+     */
+    fun systemTransfer(
+        source: ByteArray,
+        destination: ByteArray,
+        lamports: Long,
+        reference: ByteArray? = null
+    ): Instruction {
+        require(source.size == 32 && destination.size == 32) { "pubkeys are 32 bytes" }
+        require(lamports > 0) { "a payment leg moves a positive amount" }
+        val accounts = mutableListOf(
+            AccountMeta(source, isSigner = true, isWritable = true),
+            AccountMeta(destination, isSigner = false, isWritable = true),
+            AccountMeta(SolanaAddresses.SYSTEM_PROGRAM, isSigner = false, isWritable = false)
+        )
+        reference?.let {
+            require(it.size == 32) { "reference is 32 bytes" }
+            accounts += AccountMeta(it, isSigner = false, isWritable = false)
+        }
+        val data = ByteArray(4 + 8)
+        data[0] = 2
+        var v = lamports
+        for (i in 0 until 8) {
+            data[4 + i] = (v and 0xFF).toByte()
+            v = v ushr 8
+        }
+        return Instruction(SolanaAddresses.SYSTEM_PROGRAM, accounts, data)
+    }
+
+    /**
      * The payment transaction of record for an invoice (packet §7): create
      * the destination's SKR ATA if needed, then transfer exactly
      * [amountBase] of [mint] from the payer's ATA to the invoice

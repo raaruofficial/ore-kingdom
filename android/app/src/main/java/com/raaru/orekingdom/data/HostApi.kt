@@ -224,44 +224,297 @@ class HostApi(private val baseUrl: String = BuildConfig.HOST_URL) {
      * Composer — createThread (bundle actions.ts:746) through the
      * wrapper's post gate (B2 SIWS-gated; the wrapper re-derives the
      * acting wallet from the proof). The result rides in {data} as
-     * {ok, id?, error?} — callers must read the ok flag. Payment-session
-     * wiring (the thread fee for non-holders) is M3; a prestige holder's
-     * thread passes the gate session-free by the wrapper's own status
-     * read, and a VIP-board thread is a createThread into the VIP
-     * category.
+     * {ok, id?, error?} — callers must read the ok flag.
+     *
+     * M3: the paid path attaches exactly one session id — a
+     * [postSessionId] (the thread fee) or a [commercialSessionId]
+     * (the $50 commercial thread), never both (the host refuses the
+     * pair). The wrapper consumes the id in its gate pre-dispatch and
+     * strips it before the bundle call. A prestige holder's thread and
+     * a VIP-board thread pass the gate session-free by the wrapper's
+     * own status read, so those callers attach nothing.
      */
     suspend fun createThread(
         wallet: String,
         categoryId: Int,
         title: String,
         body: String,
-        siwsIdentity: JSONObject
-    ): ApiResult<JSONObject> =
-        call(
-            "createThread",
-            JSONObject()
-                .put("wallet", wallet)
-                .put("categoryId", categoryId)
-                .put("title", title)
-                .put("body", body)
-                .put("audience", "public")
-                .put("siwsIdentity", siwsIdentity)
-        )
+        siwsIdentity: JSONObject,
+        postSessionId: String? = null,
+        commercialSessionId: String? = null
+    ): ApiResult<JSONObject> {
+        val args = JSONObject()
+            .put("wallet", wallet)
+            .put("categoryId", categoryId)
+            .put("title", title)
+            .put("body", body)
+            .put("audience", "public")
+            .put("siwsIdentity", siwsIdentity)
+        postSessionId?.let { args.put("postSessionId", it) }
+        commercialSessionId?.let { args.put("commercialSessionId", it) }
+        return call("createThread", args)
+    }
 
     /** Composer — createReply (bundle actions.ts:789), same gate
-     *  discipline as createThread. {data} carries {ok, error?}. */
+     *  discipline as createThread; M3 attaches [postSessionId] when
+     *  the host's gate charges for the reply. {data} carries
+     *  {ok, error?}. */
     suspend fun createReply(
         wallet: String,
         threadId: Int,
         body: String,
+        siwsIdentity: JSONObject,
+        postSessionId: String? = null
+    ): ApiResult<JSONObject> {
+        val args = JSONObject()
+            .put("wallet", wallet)
+            .put("threadId", threadId)
+            .put("body", body)
+            .put("siwsIdentity", siwsIdentity)
+        postSessionId?.let { args.put("postSessionId", it) }
+        return call("createReply", args)
+    }
+
+    // ---------- M3: payment surfaces (staging wrapper contract) ----------
+    //
+    // Wrapper-native calls validate their arg objects strictly — the
+    // wrappers below send exactly the spec'd keys (staging wrapper
+    // server.ts validateWrapperArgs). Every gated call carries the
+    // siwsIdentity proof; the host derives the acting wallet from it.
+    // Completion answers ride in {data} with an ok flag the caller
+    // MUST read (R6): forward-apply and pending states are HTTP-200
+    // {ok:false} answers, not transport errors.
+
+    /** Post fee session (wrapper-native createPostSession). Answers
+     *  either a session row or {exempt:true, note} — see
+     *  [PostSessionReply]. */
+    suspend fun createPostSession(
+        wallet: String,
+        kind: String,
+        audience: String,
+        asset: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject()
+            .put("wallet", wallet)
+            .put("kind", kind)
+            .put("audience", audience)
+            .put("siwsIdentity", siwsIdentity)
+        asset?.let { args.put("asset", it) }
+        return call("createPostSession", args)
+    }
+
+    /** The session read behind resume-after-abandon (R4). */
+    suspend fun getPostSession(
+        wallet: String,
+        sessionId: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        sessionId?.let { args.put("sessionId", it) }
+        return call("getPostSession", args)
+    }
+
+    /** The join gate session (wrapper-native createJoinSession): the
+     *  single priced door into membership — 5,000 SKR, the price of
+     *  record, served by the session itself. */
+    suspend fun createJoinSession(
+        wallet: String,
+        displayName: String?,
+        skrName: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        displayName?.takeIf { it.isNotBlank() }?.let { args.put("displayName", it) }
+        skrName?.takeIf { it.isNotBlank() }?.let { args.put("skrName", it) }
+        return call("createJoinSession", args)
+    }
+
+    /** Join completion verifies BY REFERENCE (no signature is
+     *  presented): the host looks up the finalized transfer carrying
+     *  the session's reference. {data} may be {ok:false,
+     *  forwardApplied:true} — read the flags. */
+    suspend fun completeJoinSession(
+        wallet: String,
+        sessionId: String,
         siwsIdentity: JSONObject
     ): ApiResult<JSONObject> =
         call(
-            "createReply",
+            "completeJoinSession",
+            JSONObject()
+                .put("wallet", wallet)
+                .put("sessionId", sessionId)
+                .put("siwsIdentity", siwsIdentity)
+        )
+
+    suspend fun getJoinSession(
+        wallet: String,
+        sessionId: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        sessionId?.let { args.put("sessionId", it) }
+        return call("getJoinSession", args)
+    }
+
+    /** Prestige (wrapper-native): 10,000 SKR one-time, 100 places. */
+    suspend fun createPrestigeSession(
+        wallet: String,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "createPrestigeSession",
+            JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        )
+
+    suspend fun completePrestigeSession(
+        wallet: String,
+        sessionId: String,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "completePrestigeSession",
+            JSONObject()
+                .put("wallet", wallet)
+                .put("sessionId", sessionId)
+                .put("siwsIdentity", siwsIdentity)
+        )
+
+    /** The caller's prestige state read: {prestige, sessions[]} — the
+     *  holder flag the prestige surface renders from. */
+    suspend fun getPrestigeSession(
+        wallet: String,
+        sessionId: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        sessionId?.let { args.put("sessionId", it) }
+        return call("getPrestigeSession", args)
+    }
+
+    /** Commercial thread session (wrapper-native): $50 flat instead
+     *  of the thread fee, labeled commercial on reads. */
+    suspend fun createCommercialSession(
+        wallet: String,
+        asset: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        asset?.let { args.put("asset", it) }
+        return call("createCommercialSession", args)
+    }
+
+    suspend fun getCommercialSession(
+        wallet: String,
+        sessionId: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        sessionId?.let { args.put("sessionId", it) }
+        return call("getCommercialSession", args)
+    }
+
+    /**
+     * Tip checkout (bundle createTipCheckout, SIWS-gated): USD-
+     * denominated, asset SOL | ORE only (the bundle's assetSchema).
+     * The wrapper injects the platform fee leg ({platformFee}) into
+     * the response — the second leg of the two-leg transaction.
+     */
+    suspend fun createTipCheckout(
+        wallet: String,
+        asset: String,
+        threadId: Int?,
+        replyId: Int?,
+        amountUsdCents: Int,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject()
+            .put("wallet", wallet)
+            .put("asset", asset)
+            .put("amountUsdCents", amountUsdCents)
+            .put("siwsIdentity", siwsIdentity)
+        threadId?.let { args.put("threadId", it) }
+        replyId?.let { args.put("replyId", it) }
+        return call("createTipCheckout", args)
+    }
+
+    /** Tip completion presents the two-leg transaction's signature;
+     *  the wrapper verifies the fee leg in it and the bundle the tip
+     *  leg (A7). Idempotent on an already-verified checkout. */
+    suspend fun completeTipCheckout(
+        wallet: String,
+        checkoutId: String,
+        signature: String?,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> {
+        val args = JSONObject()
+            .put("wallet", wallet)
+            .put("checkoutId", checkoutId)
+            .put("siwsIdentity", siwsIdentity)
+        signature?.let { args.put("signature", it) }
+        return call("completeTipCheckout", args)
+    }
+
+    /** The A7 fallback settle: pays an OUTSTANDING fee leg (one whose
+     *  tip landed but whose fee never verified) so the member can tip
+     *  again. The signature must carry the fee leg alone. */
+    suspend fun payOutstandingTipFee(
+        wallet: String,
+        checkoutId: String,
+        signature: String,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "payOutstandingTipFee",
+            JSONObject()
+                .put("wallet", wallet)
+                .put("checkoutId", checkoutId)
+                .put("signature", signature)
+                .put("siwsIdentity", siwsIdentity)
+        )
+
+    /** Paid pin checkout (bundle createPaidPinCheckout, SIWS-gated):
+     *  own threads only, asset SOL | ORE. Refused at create when both
+     *  slots are spoken for — nothing is charged. */
+    suspend fun createPaidPinCheckout(
+        wallet: String,
+        threadId: Int,
+        asset: String,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "createPaidPinCheckout",
             JSONObject()
                 .put("wallet", wallet)
                 .put("threadId", threadId)
-                .put("body", body)
+                .put("asset", asset)
                 .put("siwsIdentity", siwsIdentity)
         )
+
+    /** Pin completion presents the payment signature; the wrapper may
+     *  answer {pinDeferred:true} when both slots filled between
+     *  create and completion — the pin activates when a slot frees. */
+    suspend fun completePaidPinCheckout(
+        wallet: String,
+        checkoutId: String,
+        signature: String,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "completePaidPinCheckout",
+            JSONObject()
+                .put("wallet", wallet)
+                .put("checkoutId", checkoutId)
+                .put("signature", signature)
+                .put("siwsIdentity", siwsIdentity)
+        )
+
+    /** The spotlight's slot-state read (wrapper-native getPinSlots):
+     *  cap, per-slot filled/vacant state, deferred count. Ungated —
+     *  the wallet is optional context. */
+    suspend fun getPinSlots(wallet: String? = null): ApiResult<JSONObject> {
+        val args = JSONObject()
+        wallet?.let { args.put("wallet", it) }
+        return call("getPinSlots", args)
+    }
 }

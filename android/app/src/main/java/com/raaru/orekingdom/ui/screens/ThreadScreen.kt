@@ -12,9 +12,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -28,15 +30,18 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.raaru.orekingdom.data.shortDate
 import com.raaru.orekingdom.ui.ForumViewModel
+import com.raaru.orekingdom.util.AssetSpec
+import com.raaru.orekingdom.util.Assets
 import com.solana.mobilewalletadapter.clientlib.ActivityResultSender
 
 /**
- * One thread and its replies (getThread). M2 adds the reply composer:
- * a signed-in member's reply rides createReply through the wrapper's
- * gate with their SIWS proof (payment-session wiring is M3; the
- * wrapper's own refusals render verbatim). A locked thread says so
- * and takes no reply. Host refusals render verbatim; a dead
- * connection renders the unreachable state (or saved reading,
+ * One thread and its replies (getThread). The reply composer rides
+ * createReply through the wrapper's gate with the member's SIWS
+ * proof (M3: the paid path opens only on the gate's own paid answer).
+ * Tip entry points ride the host's own flags (canTip on the thread
+ * and on each reply) into the tip flow's double opt-in. A locked
+ * thread says so and takes no reply. Host refusals render verbatim;
+ * a dead connection renders the unreachable state (or saved reading,
  * marked stale) — never blank.
  */
 @Composable
@@ -49,9 +54,11 @@ fun ThreadScreen(
     val threadState by vm.threadState.collectAsState()
     val threadRefusal by vm.threadRefusal.collectAsState()
     val member by vm.member.collectAsState()
-    val posting by vm.posting.collectAsState()
+    val paying by vm.paying.collectAsState()
     var replyBody by remember { mutableStateOf("") }
     var replyError by remember { mutableStateOf<String?>(null) }
+    var replyProgress by remember { mutableStateOf<String?>(null) }
+    var replyAsset by remember { mutableStateOf<AssetSpec>(Assets.SKR) }
 
     LaunchedEffect(threadId) { vm.loadThread(threadId) }
 
@@ -99,6 +106,14 @@ fun ThreadScreen(
                                 }
                                 Spacer(Modifier.height(12.dp))
                                 Text(thread.body, style = MaterialTheme.typography.bodyLarge)
+                                if (member != null && thread.canTip) {
+                                    Spacer(Modifier.height(12.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            navController.navigate("tip/${thread.id}/-1")
+                                        }
+                                    ) { Text("Tip ${thread.authorName}") }
+                                }
                                 if (thread.isLocked) {
                                     Spacer(Modifier.height(12.dp))
                                     Text(
@@ -136,6 +151,15 @@ fun ThreadScreen(
                                     }
                                     Spacer(Modifier.height(4.dp))
                                     Text(reply.body, style = MaterialTheme.typography.bodyMedium)
+                                    if (member != null && reply.canTip) {
+                                        TextButton(
+                                            onClick = {
+                                                navController.navigate(
+                                                    "tip/${thread.id}/${reply.id}"
+                                                )
+                                            }
+                                        ) { Text("Tip ${reply.authorName}") }
+                                    }
                                 }
                             }
                         }
@@ -150,6 +174,24 @@ fun ThreadScreen(
                                             minLines = 3,
                                             modifier = Modifier.fillMaxWidth()
                                         )
+                                        Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            "If the host charges for this reply, pay in",
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        AssetPicker(
+                                            assets = Assets.MENU,
+                                            selected = replyAsset,
+                                            enabled = !paying
+                                        ) { replyAsset = it }
+                                        if (replyProgress != null) {
+                                            Spacer(Modifier.height(8.dp))
+                                            Text(
+                                                replyProgress!!,
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        }
                                         if (replyError != null) {
                                             Spacer(Modifier.height(8.dp))
                                             Text(
@@ -162,18 +204,24 @@ fun ThreadScreen(
                                         Button(
                                             onClick = {
                                                 replyError = null
-                                                vm.postReply(sender, threadId, replyBody) { err ->
-                                                    if (err == null) {
-                                                        replyBody = ""
-                                                    } else {
-                                                        replyError = err
+                                                replyProgress = null
+                                                vm.postReply(
+                                                    sender, threadId, replyBody, replyAsset,
+                                                    onProgress = { replyProgress = it },
+                                                    onDone = { err ->
+                                                        replyProgress = null
+                                                        if (err == null) {
+                                                            replyBody = ""
+                                                        } else {
+                                                            replyError = err
+                                                        }
                                                     }
-                                                }
+                                                )
                                             },
-                                            enabled = !posting && replyBody.isNotBlank(),
+                                            enabled = !paying && replyBody.isNotBlank(),
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Text(if (posting) "Posting…" else "Post reply")
+                                            Text(if (paying) "Posting…" else "Post reply")
                                         }
                                     } else {
                                         Text(

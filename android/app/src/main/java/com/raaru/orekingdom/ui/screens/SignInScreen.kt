@@ -45,6 +45,9 @@ fun SignInScreen(navController: NavController, vm: ForumViewModel, sender: Activ
     val walletState by vm.walletState.collectAsState()
     val member by vm.member.collectAsState()
     val signingIn by vm.signingIn.collectAsState()
+    val hostMember by vm.hostMember.collectAsState()
+    val membershipChecked by vm.membershipChecked.collectAsState()
+    val prestigeHolder by vm.isPrestigeHolder.collectAsState()
     var error by remember { mutableStateOf<String?>(null) }
 
     Scaffold(topBar = { OreTopBar("Sign in", navController, showBack = true) }) { padding ->
@@ -87,6 +90,53 @@ fun SignInScreen(navController: NavController, vm: ForumViewModel, sender: Activ
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
+                if (membershipChecked && hostMember == null) {
+                    // R1: signed in, but the host has no member record
+                    // for this wallet — the join gate's offer. Reading
+                    // stays open either way; taking part needs the join.
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "This wallet hasn't joined the kingdom yet.",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Reading is open to everyone. Posting, tipping and " +
+                                    "pinning are for members — membership is one " +
+                                    "payment of 5,000 SKR.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Button(
+                                onClick = { navController.navigate("join") },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Join the kingdom — 5,000 SKR") }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+                if (hostMember != null) {
+                    OutlinedButton(
+                        onClick = { navController.navigate("prestige") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (prestigeHolder == true) {
+                                "👑 Prestige — you hold it"
+                            } else {
+                                "Prestige — 10,000 SKR, 100 places"
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
                 OutlinedButton(
                     onClick = {
                         vm.signOut(sender)

@@ -225,17 +225,26 @@ fun ThreadRow(thread: ForumThread, onClick: () -> Unit) {
     }
 }
 
+/** One spotlight slot as the strip renders it — mapped by the River
+ *  from the getPinSlots slot-state read (the source of record since
+ *  the M2 host fixes), or, while that read has not answered, from
+ *  the listForum payload derivation. Either way the strip renders
+ *  only what a host read served. */
+sealed interface PinSlotUi {
+    data class Filled(val threadId: Int, val title: String, val endsLabel: String) : PinSlotUi
+    data object Vacant : PinSlotUi
+}
+
 /**
  * The pin spotlight (pin spec): the live pin slots rotate through this
  * one position above the River with equal exposure; a vacant slot is
  * the house availability ad — spot, $250 / 12 hours, and the take-it
- * action, which opens the pin explainer (the purchase itself is wired
- * with the M3 payment flows). The strip never renders an empty frame:
- * the slot list always carries PIN_SLOT_COUNT entries.
+ * action, which opens the pin purchase (M3). The strip never renders
+ * an empty frame: the slot list always carries the ruled capacity.
  */
 @Composable
 fun PinSpotlight(
-    slots: List<com.raaru.orekingdom.data.PinSlot>,
+    slots: List<PinSlotUi>,
     onOpenThread: (Int) -> Unit,
     onTakeSpot: () -> Unit
 ) {
@@ -258,22 +267,21 @@ fun PinSpotlight(
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         when (slot) {
-            is com.raaru.orekingdom.data.PinSlot.Filled -> {
-                val thread = slot.thread
+            is PinSlotUi.Filled -> {
                 Column(
                     modifier = Modifier
-                        .clickable { onOpenThread(thread.id) }
+                        .clickable { onOpenThread(slot.threadId) }
                         .padding(14.dp)
                 ) {
                     Text(
-                        "📌 PAID PIN · until ${shortDate(thread.paidPinEndsAt)}",
+                        "📌 PAID PIN · until ${slot.endsLabel}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        thread.title,
+                        slot.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
@@ -281,13 +289,13 @@ fun PinSpotlight(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "by ${thread.authorName} · tap to open",
+                        "Tap to open the pinned thread",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-            com.raaru.orekingdom.data.PinSlot.Vacant -> {
+            PinSlotUi.Vacant -> {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text(
                         "📌 PIN SPOT AVAILABLE",
@@ -306,32 +314,4 @@ fun PinSpotlight(
             }
         }
     }
-}
-
-/** The pin explainer the vacant slot's take-it action opens. Truthful
- *  about what exists today: the spot, the price of record, the
- *  rotation — and that the purchase flow itself lands with the M3
- *  payment build. Not a dead end and not a fake checkout. */
-@Composable
-fun PinExplainerDialog(onDismiss: () -> Unit) {
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Pin a thread") },
-        text = {
-            Text(
-                "Two pin spots rotate through the top of the River, each " +
-                    "shown in turn. A spot costs $250 for 12 hours, payable " +
-                    "in SKR, ORE, SOL or USDC; if both spots are taken, a " +
-                    "purchase waits and starts when the first spot frees.\n\n" +
-                    "Buying a pin arrives with the payments update — the " +
-                    "spot, the price and the rotation you see here are " +
-                    "already live on the board."
-            )
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) {
-                Text("Got it")
-            }
-        }
-    )
 }

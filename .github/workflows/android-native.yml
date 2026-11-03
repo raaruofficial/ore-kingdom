@@ -45,6 +45,15 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
+      - name: Unit tests
+        # M3: the payment-construction proof lives in the unit tests
+        # (transfer shapes, money conversions, the tip arming check) —
+        # they run in CI so the green check covers them, not just the
+        # assemble. (Before M3 the workflow only assembled, and the
+        # test tree had silently rotted — a dangling formatSkr
+        # reference nothing compiled. This step is the cure.)
+        run: gradle :app:testDebugUnitTest --stacktrace
+
       - name: Assemble debug APK
         run: gradle :app:assembleDebug --stacktrace
 
