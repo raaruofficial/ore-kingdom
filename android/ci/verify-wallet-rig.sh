@@ -984,9 +984,14 @@ composer_to_review() { # taps Continue, lands on the review with "Post thread"
   local f="$TMPD/comp-rev.xml"
   dump_ui "$f" || return 1
   tap_text "$f" "Continue" || { log "composer_to_review: no Continue control"; return 1; }
+  # The review is a scrollable column and the Post thread button sits
+  # below the fold (run 41584310952's filed dump showed the full quote
+  # — 0.023333334 SOL for $3.50 at the stub price — with the button
+  # off-screen). Scroll while polling.
   local elapsed=0
   while [ "$elapsed" -lt 45 ]; do
     if dump_ui "$f" && grep -q 'text="Post thread"' "$f"; then return 0; fi
+    adb shell input swipe 540 1800 540 900 300 >/dev/null 2>&1 || true
     sleep 3; elapsed=$((elapsed + 3))
   done
   log "composer_to_review: review with Post thread never appeared"
@@ -1033,6 +1038,11 @@ cell_cr5() {
   # composer (or the River) must be live again, never stuck on
   # "Posting…". Window: 30 s, the registry bar.
   local elapsed=0 resolved="no" rf="$TMPD/cr5-poll.xml"
+  # The composer may sit mid-scroll after the abandon; return to the
+  # top so the state anchors (Title / Post thread) are on screen.
+  adb shell input swipe 540 700 540 2000 250 >/dev/null 2>&1 || true
+  adb shell input swipe 540 700 540 2000 250 >/dev/null 2>&1 || true
+  sleep 1
   while [ "$elapsed" -lt 30 ]; do
     if dump_ui "$rf" && ! grep -q "Posting…" "$rf" && ! grep -q "Asking the host…" "$rf"; then
       if grep -q 'text="Post thread"' "$rf" || grep -q 'text="New thread"' "$rf" || grep -q 'text="Title"' "$rf"; then
