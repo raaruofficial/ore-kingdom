@@ -318,6 +318,13 @@ data class CatchUpTip(
     val asset: String,
     /** Base units as a string — the wrapper serves the integer as text. */
     val amountBaseUnits: String,
+    /** The host's own display rendering of the amount (M2 host fixes:
+     *  derived server-side from the asset's decimals — "12.5" for
+     *  12,500,000 SKR base units). Null when the host doesn't serve
+     *  it; the Catch-Up then falls back to the raw base units. */
+    val displayAmount: String? = null,
+    /** The asset decimals the host derived [displayAmount] with. */
+    val decimals: Int? = null,
     val senderName: String,
     val createdAt: String
 ) {
@@ -328,10 +335,16 @@ data class CatchUpTip(
             replyId = if (o.isNull("replyId")) null else o.optInt("replyId"),
             asset = o.optString("asset"),
             amountBaseUnits = o.optString("amountBaseUnits"),
+            displayAmount = if (o.isNull("displayAmount")) null else o.optString("displayAmount"),
+            decimals = if (o.isNull("decimals")) null else o.optInt("decimals"),
             senderName = o.optString("senderName", "Member"),
             createdAt = o.optString("createdAt")
         )
     }
+
+    /** What the Catch-Up renders for the amount: the host's display
+     *  figure when served, the raw base units otherwise (P1). */
+    val displayAmountOrRaw: String get() = displayAmount ?: amountBaseUnits
 }
 
 /** A pin change in the Catch-Up. The host derives exactly two honest
