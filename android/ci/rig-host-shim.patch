@@ -1,0 +1,38 @@
+diff --git a/server.ts b/server.ts
+index d5e40ea..afd598a 100644
+--- a/server.ts
++++ b/server.ts
+@@ -2357,6 +2357,33 @@ async function handleAction(body: any, ip: string): Promise<{ status: number; pa
+       return { status: 200, payload: { error: e?.message ?? "Sign-in proof required." } };
+     }
+   }
++  // RIG SHIM -- CI wallet rig ONLY (android/ci/rig-host-shim.patch,
++  // applied to the rig's throwaway host copy; never in a deployed
++  // tree, and inert unless OK_RIG_SKR=1). The bundle's
++  // authenticateSiws resolves the wallet's .skr name through a
++  // mainnet TldParser connection whose URL is compiled into the
++  // bundle -- it cannot be fixture-served, and the rig's throwaway
++  // mock-wallet key owns no mainnet .skr name, so the bundle path
++  // can only ever refuse it. This shim performs the SAME proof
++  // verification the bundle performs (the wrapper's own
++  // requireSiwsIdentity: parse, address binding, canonical
++  // re-serialization, ed25519) and answers from the rig-seeded
++  // member row instead of the name lookup. The .skr gate itself is
++  // battery-proven elsewhere; everything downstream of sign-in --
++  // sessions, payment verification, posting -- runs the real code.
++  if (action === "authenticateSiws" && process.env.OK_RIG_SKR === "1") {
++    try {
++      const identity = requireSiwsIdentity({ siwsIdentity: args });
++      if (typeof args?.wallet === "string" && args.wallet !== identity)
++        return { status: 200, payload: { data: { ok: false, error: "The acting wallet does not match the signed identity. Nothing was done." } } };
++      const m = memberByWallet(identity);
++      if (!m || !m.skr_name)
++        return { status: 200, payload: { data: { ok: false, error: "Rig host: no seeded member for this wallet." } } };
++      return { status: 200, payload: { data: { ok: true, wallet: identity, skrName: String(m.skr_name) } } };
++    } catch (e: any) {
++      return { status: 200, payload: { data: { ok: false, error: e?.message ?? "Rig host: sign-in proof refused." } } };
++    }
++  }
+   if (action === "createPostSession") {
+     try { return { status: 200, payload: { data: await createPostSession(args) } }; }
+     catch (e: any) { return { status: 200, payload: { error: e?.message ?? "createPostSession failed" } }; }

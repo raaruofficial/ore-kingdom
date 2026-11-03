@@ -1,0 +1,199 @@
+name: Ore Kingdom wallet-rig job
+description: >-
+  One suite of the Ore Kingdom wallet-present runtime rig: builds the
+  debug APK from the checked-out commit (HOST_URL pointed at the rig
+  host on the emulator's host gateway), builds the pinned Mock MWA
+  Wallet (d444aff0) with its broadcast endpoint rig-patched to the
+  stub chain and the imported throwaway rig key, starts the real
+  v0.1.4 staging host (repo ./host/staging-v014, custody-DB copy,
+  rig-host-shim applied) with OK_RPC_URL on the rig stub chain and
+  OK_PRICE_URL on the rig price stub, boots a PIN-locked AVD on the
+  CI-KVM lane, and runs android/ci/verify-wallet-rig.sh against both
+  binaries.
+
+inputs:
+  api-level:
+    required: true
+  suite:
+    required: true
+    description: core | kfc008 | all
+  avd-name:
+    required: true
+  mock-private-key:
+    required: true
+    description: Ore Kingdom rig throwaway Ed25519 seed (base58) for the mock wallet
+  expect:
+    required: false
+    default: pass
+    description: pass = driver must pass; fail = faulted-control run, driver MUST fail CR-3
+
+runs:
+  using: composite
+  steps:
+    - name: Enable KVM group permissions
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        ls -la /dev/kvm
+
+    - name: Install emulator runtime libraries
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq libpulse0 libgl1 libegl1 libnss3 libxcb-cursor0 > /dev/null
+        ldconfig -p | grep -c libpulse || true
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: "8.11.1"
+
+    - name: Set up Bun (host + stub chain)
+      uses: oven-sh/setup-bun@v2
+
+    - name: Build Ore Kingdom debug APK (build under test = this commit; HOST_URL = rig host)
+      shell: bash
+      working-directory: android
+      run: |
+        gradle :app:assembleDebug -PHOST_URL=http://10.0.2.2:8377 --stacktrace
+        ls -la app/build/outputs/apk/debug/app-debug.apk
+        sha256sum app/build/outputs/apk/debug/app-debug.apk
+        cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/ok-debug.apk"
+
+    - name: Build rig IME (verbatim field entry for the driver)
+      shell: bash
+      working-directory: android/ci-tools/rig-ime
+      run: |
+        gradle :app:assembleDebug --stacktrace
+        cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/rig-ime.apk"
+
+    - name: Clone Mock MWA Wallet at pinned commit + apply the rig endpoint patch
+      shell: bash
+      env:
+        MOCK_COMMIT: d444aff0c72dadd0f5c442ea2bc3559b62916e01
+      run: |
+        set -euo pipefail
+        git clone https://github.com/solana-mobile/mock-mwa-wallet "$GITHUB_WORKSPACE/mock-src"
+        cd "$GITHUB_WORKSPACE/mock-src"
+        git checkout "$MOCK_COMMIT"
+        git rev-parse HEAD
+        git apply "$GITHUB_WORKSPACE/android/ci/rig-mock-rpc.patch"
+        git diff --stat
+
+    - name: Gradle cache (mock wallet)
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: mock-gradle-d444aff0-${{ runner.os }}
+
+    - name: Configure + build mock wallet (imported throwaway key)
+      shell: bash
+      env:
+        MOCK_PK: ${{ inputs.mock-private-key }}
+      run: |
+        set -euo pipefail
+        cd "$GITHUB_WORKSPACE/mock-src"
+        {
+          printf 'privateKey=%s\n' "$MOCK_PK"
+          printf 'walletName=%s\n' "OreKingdomTestWallet"
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME"
+        } > local.properties
+        chmod +x gradlew
+        ./gradlew :app:assembleDebug --console=plain --no-daemon 2>&1 | tail -n 25
+        ls -la app/build/outputs/apk/debug/app-debug.apk
+        cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/mock-debug.apk"
+
+    - name: Prepare rig host (staging tree copy + disclosed shim + custody DB copy)
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/righost" "$RUNNER_TEMP/empty-client"
+        cp host/staging-v014/server.ts host/staging-v014/actions.bundle.js host/staging-v014/package.json "$RUNNER_TEMP/righost/"
+        cd "$RUNNER_TEMP/righost"
+        patch -p1 < "$GITHUB_WORKSPACE/android/ci/rig-host-shim.patch"
+        bun install
+        cp "$GITHUB_WORKSPACE/host/staging-v014/custody-app.db" "$RUNNER_TEMP/forum-rig.db"
+        ls -la
+
+    - name: Start stub chain + price stub + rig host (background, runner-local)
+      shell: bash
+      run: |
+        set -euo pipefail
+        nohup bun "$GITHUB_WORKSPACE/android/ci/rig-stub.ts" > "$RUNNER_TEMP/stub.log" 2>&1 &
+        nohup env OK_PORT=8377 OK_DB_PATH="$RUNNER_TEMP/forum-rig.db" \
+          OK_RPC_URL=http://127.0.0.1:18741 OK_PRICE_URL=http://127.0.0.1:18742 \
+          OK_RIG_SKR=1 OK_CLIENT_DIR="$RUNNER_TEMP/empty-client" \
+          bun run "$RUNNER_TEMP/righost/server.ts" > "$RUNNER_TEMP/host.log" 2>&1 &
+        for i in $(seq 1 40); do
+          curl -sf http://127.0.0.1:18741/healthz >/dev/null 2>&1 && \
+          curl -sf http://127.0.0.1:8377/healthz >/dev/null 2>&1 && break
+          sleep 2
+        done
+        curl -sf http://127.0.0.1:18741/healthz
+        curl -sf http://127.0.0.1:8377/healthz
+        echo "stub chain + rig host up"
+        tail -n 5 "$RUNNER_TEMP/stub.log" "$RUNNER_TEMP/host.log" || true
+
+    - name: Reclaim disk before emulator
+      shell: bash
+      run: |
+        df -h / /home/runner | tail -n 3
+        rm -rf ~/.gradle/caches ~/.gradle/wrapper \
+          "$GITHUB_WORKSPACE/mock-src/app/build" "$GITHUB_WORKSPACE/mock-src/.gradle" \
+          "$GITHUB_WORKSPACE/android/ci-tools/rig-ime/app/build" "$GITHUB_WORKSPACE/android/ci-tools/rig-ime/.gradle" \
+          "$GITHUB_WORKSPACE/android/app/build" "$GITHUB_WORKSPACE/android/.gradle"
+        df -h / /home/runner | tail -n 3
+
+    - name: Run wallet rig on PIN-locked AVD (API ${{ inputs.api-level }})
+      uses: reactivecircus/android-emulator-runner@v2
+      env:
+        SUITE: ${{ inputs.suite }}
+        BUILD_SHA: ${{ github.sha }}
+        OK_APK: ${{ github.workspace }}/ok-debug.apk
+        MOCK_APK: ${{ github.workspace }}/mock-debug.apk
+        RIG_IME_APK: ${{ github.workspace }}/rig-ime.apk
+        EXPECTED_PUBKEY: 94tbf6fSft8z67rfuqaUoSAYzN1Bb7b2h3RwxQrbP9MW
+        EXPECTED_TRUNC: "94tb…P9MW"
+        RIG_SKR_NAME: "rigwallet.skr"
+        DEVICE_PIN: "1234"
+        RIG_DB_PATH: ${{ runner.temp }}/forum-rig.db
+      with:
+        api-level: ${{ inputs.api-level }}
+        target: google_apis
+        arch: x86_64
+        profile: pixel_6
+        avd-name: ${{ inputs.avd-name }}
+        force-avd-creation: true
+        emulator-boot-timeout: 1200
+        disk-size: 4096M
+        disable-animations: true
+        emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+        script: bash android/ci/run-rig.sh ${{ inputs.suite }} ${{ inputs.api-level }} ${{ inputs.expect }}
+
+    - name: Upload wallet-rig evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ok-wallet-rig-${{ inputs.suite }}-api${{ inputs.api-level }}-${{ inputs.expect }}
+        path: wallet-rig-evidence-${{ inputs.suite }}-api${{ inputs.api-level }}
+        if-no-files-found: warn
+
+    - name: Upload rig host + stub logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ok-wallet-rig-hostlogs-${{ inputs.suite }}-api${{ inputs.api-level }}-${{ inputs.expect }}
+        path: |
+          ${{ runner.temp }}/host.log
+          ${{ runner.temp }}/stub.log
+        if-no-files-found: warn

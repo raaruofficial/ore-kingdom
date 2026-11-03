@@ -1,0 +1,104 @@
+diff --git a/android/app/src/main/java/com/raaru/orekingdom/MainActivity.kt b/android/app/src/main/java/com/raaru/orekingdom/MainActivity.kt
+index dadd54b..8620fa9 100644
+--- a/android/app/src/main/java/com/raaru/orekingdom/MainActivity.kt
++++ b/android/app/src/main/java/com/raaru/orekingdom/MainActivity.kt
+@@ -51,8 +51,13 @@ class MainActivity : ComponentActivity() {
+ 
+     override fun onResume() {
+         super.onResume()
+-        // KFC-008 foreground reconciliation (scoped, v0.1.19 shape).
+-        (application as OreKingdomApp).walletManager.onReturnedToForeground()
++        // FAULTED CONTROL (rig-control lane only): the whole KFC-008
++        // cure is inert in this build -- the foreground reconciler is
++        // disarmed here and in WalletManager, the post-interruption
++        // refire/re-issue machinery never arms, the claim-settlement
++        // race and the 120 s backstop are removed. The KFC-008 cell
++        // must FAIL on this binary; if it passes, the cell cannot see
++        // the fault class and no verdict from it means anything.
+     }
+ 
+     override fun onStop() {
+diff --git a/android/app/src/main/java/com/raaru/orekingdom/wallet/WalletManager.kt b/android/app/src/main/java/com/raaru/orekingdom/wallet/WalletManager.kt
+index 5e1e773..649c218 100644
+--- a/android/app/src/main/java/com/raaru/orekingdom/wallet/WalletManager.kt
++++ b/android/app/src/main/java/com/raaru/orekingdom/wallet/WalletManager.kt
+@@ -197,7 +197,10 @@ class WalletManager {
+     private suspend fun performConnect(sender: ActivityResultSender, gen: Int): Result<String> =
+         withContext(Dispatchers.IO) {
+             _uiState.value = WalletUiState.Working
+-            val followInterruption = lastRequestInterrupted
++            // FAULTED CONTROL: was `lastRequestInterrupted`. Forcing
++            // false disarms the post-interruption machinery on this
++            // path (adapter reset, refire loop / re-issue gate).
++            val followInterruption = false
+             if (followInterruption) {
+                 resetWalletAdapter()
+                 lastRequestInterrupted = false
+@@ -332,7 +335,10 @@ class WalletManager {
+         message: ByteArray
+     ): Result<ByteArray> = withContext(Dispatchers.IO) {
+         _uiState.value = WalletUiState.Working
+-        val followInterruption = lastRequestInterrupted
++        // FAULTED CONTROL: was `lastRequestInterrupted`. Forcing
++        // false disarms the post-interruption machinery on this
++        // path (adapter reset, refire loop / re-issue gate).
++        val followInterruption = false
+         if (followInterruption) {
+             // Consumed here, mirroring performConnect: the first wallet
+             // operation after an interruption is the follow-up; if THIS
+@@ -452,7 +458,10 @@ class WalletManager {
+         transaction: ByteArray
+     ): Result<ByteArray> = withContext(Dispatchers.IO) {
+         _uiState.value = WalletUiState.Working
+-        val followInterruption = lastRequestInterrupted
++        // FAULTED CONTROL: was `lastRequestInterrupted`. Forcing
++        // false disarms the post-interruption machinery on this
++        // path (adapter reset, refire loop / re-issue gate).
++        val followInterruption = false
+         if (followInterruption) {
+             lastRequestInterrupted = false
+         }
+@@ -560,6 +569,10 @@ class WalletManager {
+      * CR-4 escape), and cancel the request as best effort.
+      */
+     fun onReturnedToForeground() {
++        // FAULTED CONTROL: the reconciler is inert -- it never claims
++        // a generation, never resolves state, never settles a caller.
++        return
++        @Suppress("UNREACHABLE_CODE")
+         val job = pendingRequest ?: return
+         val gen = pendingGeneration
+         val kind = pendingKind ?: return
+@@ -621,17 +634,13 @@ class WalletManager {
+         pendingKind = kind
+         pendingGeneration = gen
+         pendingClaimSignal = claimSignal
+-        var settledByClaim = false
+         val result: Result<T>? = try {
+-            when (val race = raceWithClaim(deferred, claimSignal, WALLET_REQUEST_TIMEOUT_MS)) {
+-                is ClaimRace.Answered -> race.value
+-                ClaimRace.Claimed -> {
+-                    settledByClaim = true
+-                    Log.d(LOG_TAG, "caller settled by reconciler claim gen=$gen kind=$kind")
+-                    null
+-                }
+-                ClaimRace.TimedOut -> null
+-            }
++            // FAULTED CONTROL: was the claim-settlement race --
++            // raceWithClaim(deferred, claimSignal,
++            // WALLET_REQUEST_TIMEOUT_MS). Both the 120 s backstop and
++            // the claim signal are removed: an abandoned request parks
++            // the caller indefinitely (the pre-cure hang shape).
++            deferred.await()
+         } catch (e: CancellationException) {
+             if (deferred.isCancelled) {
+                 null
+@@ -659,7 +668,7 @@ class WalletManager {
+         // before the signal resumes this caller, the caller still receives
+         // exactly one failure carrying INTERRUPTED_MESSAGE and the state
+         // was already resolved by the reconciler at claim time.
+-        return if (claimResolution(gen) || settledByClaim) onInterrupted()
++        return if (claimResolution(gen)) onInterrupted()
+         else Result.failure(IllegalStateException(INTERRUPTED_MESSAGE))
+     }
+ 

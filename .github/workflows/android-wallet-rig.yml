@@ -1,0 +1,45 @@
+name: Wallet rig (emulator + Mock MWA Wallet)
+
+# Dispatch-only: the gate lanes run deliberately against a commit,
+# never as a push tax (estate CI pattern). The KFC-008 runtime cell
+# lives here — see android/ci/verify-wallet-rig.sh for the cells and
+# ~/workspace/ore-kingdom/M4_EMULATOR_REPORT.md for the graded runs.
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: which lane to run
+        type: choice
+        options: [rig, rig-control]
+        default: rig
+
+permissions:
+  contents: read
+
+jobs:
+  rig:
+    if: inputs.lane == 'rig'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/wallet-rig
+        with:
+          api-level: 35
+          suite: all
+          avd-name: ok-rig-35
+          mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
+
+  rig-control:
+    if: inputs.lane == 'rig-control'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Neuter the WHOLE KFC-008 cure (faulted control build — reconciler + refire/re-issue machinery + claim race + backstop)
+        run: git apply android/ci/control-neuter.patch
+      - uses: ./.github/actions/wallet-rig
+        with:
+          api-level: 35
+          suite: kfc008
+          avd-name: ok-rig-control-35
+          mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
+          expect: fail
