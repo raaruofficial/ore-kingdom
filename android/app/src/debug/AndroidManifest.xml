@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: rig/staging lanes may talk to a host on the
+     developer machine (10.0.2.2) or a staging origin over plain HTTP.
+     Release keeps usesCleartextTraffic=false from the main manifest. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic" />
+</manifest>
