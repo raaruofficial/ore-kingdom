@@ -17,9 +17,9 @@
 #
 # Every variant also asserts: our process alive at the end, resumed
 # activity is ours, and no FATAL EXCEPTION for our process in logcat.
-# Evidence (hierarchy dump, logcat, screenshot, checks) lands in the
-# evidence dir; verdict.txt carries the one-line verdict. Exit code is
-# the gate: 0 = PASS, 1 = FAIL.
+# Evidence (per-poll hierarchy dumps + state trace, logcat, screenshot,
+# fetch probe, checks) lands in the evidence dir; verdict.txt carries
+# the one-line verdict. Exit code is the gate: 0 = PASS, 1 = FAIL.
 #
 # Usage: emulator-cold-run.sh <variant> <apk-path> <evidence-dir>
 
@@ -30,7 +30,6 @@ APK="${2:?apk path required}"
 EVIDENCE="${3:?evidence dir required}"
 mkdir -p "$EVIDENCE"
 
-fail() { echo "FAIL: $*" | tee "$EVIDENCE/verdict.txt"; exit 1; }
 note() { echo "[cold-run:$VARIANT] $*"; }
 
 # --- Package of record: derive from the APK itself, never assume. ----------
@@ -49,6 +48,25 @@ echo "$PKG" > "$EVIDENCE/package.txt"
 
 adb wait-for-device
 adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 2; done' || true
+
+# --- End-of-run evidence, captured on BOTH paths ------------------------------
+collect_final_evidence() {
+  adb logcat -d > "$EVIDENCE/logcat.txt" 2>/dev/null || true
+  adb shell dumpsys activity activities > "$EVIDENCE/activities.txt" 2>/dev/null || true
+  adb shell dumpsys window windows > "$EVIDENCE/windows.txt" 2>/dev/null || true
+  adb exec-out screencap -p > "$EVIDENCE/screen.png" 2>/dev/null || true
+  {
+    echo "--- readcache (a forum_all entry here proves the host fetch succeeded) ---"
+    adb shell run-as "$PKG" ls -la files/readcache/ 2>&1 || echo "run-as listing failed"
+    echo "--- ping host (DNS resolution shows even when ICMP is dropped) ---"
+    adb shell ping -c 1 -W 3 orekingdom.137-184-143-128.sslip.io 2>&1 | head -4 || true
+  } > "$EVIDENCE/fetch-probe.txt"
+}
+fail() {
+  echo "FAIL: $*" | tee "$EVIDENCE/verdict.txt"
+  collect_final_evidence
+  exit 1
+}
 
 # --- Variant preconditions ---------------------------------------------------
 if [ "$VARIANT" = "nowallet" ]; then
@@ -100,35 +118,53 @@ grep -q "Status: ok" "$EVIDENCE/launch.txt" || note "am start -W did not report 
 
 # --- Settle: poll the UI hierarchy until the variant's marker appears --------
 # uiautomator dump refuses while the UI never idles (the loading spinner),
-# so a failed/empty dump during Loading is expected and retried.
-dump_ui() {
-  adb shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 || return 1
-  adb exec-out cat /sdcard/window_dump.xml 2>/dev/null || return 1
+# so a failed/empty dump during Loading is expected and retried. EVERY
+# poll's raw result is kept, and each poll is classified into a state
+# trace — the trace is the diagnostic record of what the screen did.
+classify() {
+  local xml="$1"
+  if [ -z "$xml" ]; then echo "DUMP_FAILED"; return; fi
+  if grep -q 'could not load' <<<"$xml"; then echo "UNREACHABLE"; return; fi
+  if grep -q 'text="All"' <<<"$xml" && grep -q 'text="Ore Kingdom"' <<<"$xml"; then echo "READY"; return; fi
+  if grep -q 'Loading the kingdom' <<<"$xml"; then echo "LOADING"; return; fi
+  echo "UNKNOWN"
 }
 marker_present() {
-  local xml="$1"
+  local state="$1"
   case "$VARIANT" in
-    online|nowallet)
-      grep -q 'text="Ore Kingdom"' <<<"$xml" \
-        && grep -q 'text="All"' <<<"$xml" \
-        && ! grep -q 'could not load' <<<"$xml" ;;
-    offline)
-      grep -q 'could not load' <<<"$xml" && grep -q 'text="Retry"' <<<"$xml" ;;
+    online|nowallet) [ "$state" = "READY" ] ;;
+    offline)         [ "$state" = "UNREACHABLE" ] ;;
   esac
 }
 
 XML=""
-for i in $(seq 1 10); do
+STATE=""
+: > "$EVIDENCE/state-trace.txt"
+for i in $(seq 1 12); do
   sleep 6
-  XML="$(dump_ui)" || XML=""
-  if [ -n "$XML" ] && marker_present "$XML"; then
-    note "variant marker found on poll $i"
+  RAW="$(adb shell uiautomator dump /sdcard/window_dump.xml 2>&1)"
+  XML="$(adb exec-out cat /sdcard/window_dump.xml 2>/dev/null)" || XML=""
+  # Guard: a stale dump file from a failed dump must not pose as fresh —
+  # the uiautomator output line announces a successful write.
+  grep -q "dumped to" <<<"$RAW" || XML=""
+  STATE="$(classify "$XML")"
+  NODES="$(grep -o 'text="[^"]\+"' <<<"$XML" | grep -vc 'text=""' || true)"
+  echo "poll $i: state=$STATE text_nodes=${NODES:-0} dump_msg=$(head -1 <<<"$RAW")" >> "$EVIDENCE/state-trace.txt"
+  note "poll $i: state=$STATE text_nodes=${NODES:-0}"
+  if [ -n "$XML" ]; then printf '%s' "$XML" > "$EVIDENCE/dump_poll$i.xml"; fi
+  if marker_present "$STATE"; then
+    note "variant marker found on poll $i (state=$STATE)"
     break
   fi
   XML=""
 done
-[ -n "$XML" ] || { adb logcat -d > "$EVIDENCE/logcat.txt" 2>/dev/null || true; fail "expected UI state for variant '$VARIANT' never rendered (see logcat.txt)"; }
+[ -n "$XML" ] || fail "expected UI state for variant '$VARIANT' never rendered; state trace: $(tr '\n' ';' < "$EVIDENCE/state-trace.txt")"
 printf '%s' "$XML" > "$EVIDENCE/window_dump.xml"
+
+# Offline carries one extra marker: the Retry action on the error card.
+if [ "$VARIANT" = "offline" ] && ! grep -q 'text="Retry"' "$EVIDENCE/window_dump.xml"; then
+  fail "offline error state rendered without its Retry action"
+fi
 
 # Text-node census: a blank activity has ~zero text nodes.
 TEXT_NODES="$(grep -o 'text="[^"]\+"' "$EVIDENCE/window_dump.xml" | grep -vc 'text=""' || true)"
@@ -157,6 +193,10 @@ fi
 echo "fatal_exceptions_for_pkg=0" >> "$EVIDENCE/checks.txt"
 
 adb exec-out screencap -p > "$EVIDENCE/screen.png" 2>/dev/null || true
+{
+  echo "--- readcache ---"
+  adb shell run-as "$PKG" ls -la files/readcache/ 2>&1 || echo "run-as listing failed"
+} > "$EVIDENCE/fetch-probe.txt"
 
 case "$VARIANT" in
   online)   MSG="cold start rendered the River from the live host (chips + content, no unreachable card); process alive; no crash" ;;

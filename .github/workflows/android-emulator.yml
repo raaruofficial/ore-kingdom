@@ -82,6 +82,9 @@ jobs:
           if-no-files-found: warn
 
       - name: Cold run — no-wallet
+        # !cancelled(): a failed variant must not starve the others'
+        # evidence — the gate wants all three verdicts per run.
+        if: ${{ !cancelled() }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -100,6 +103,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Cold run — offline
+        if: ${{ !cancelled() }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
