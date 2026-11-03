@@ -990,7 +990,7 @@ composer_to_review() { # taps Continue, lands on the review with "Post thread"
   # off-screen). Scroll while polling.
   local elapsed=0
   while [ "$elapsed" -lt 45 ]; do
-    if dump_ui "$f" && grep -q 'text="Post thread"' "$f"; then return 0; fi
+    if dump_ui "$f" && grep -qE 'text="(Pay &amp; post|Post thread)"' "$f"; then return 0; fi
     adb shell input swipe 540 1800 540 900 300 >/dev/null 2>&1 || true
     sleep 3; elapsed=$((elapsed + 3))
   done
@@ -1028,7 +1028,7 @@ cell_cr5() {
   local sess_before; sess_before="$(db_post_sessions)"
   log "cr5: review up; sessions at review: $sess_before"
   dump_ui "$f" || { cr5="FAIL(no dump at review)"; return; }
-  tap_text "$f" "Post thread" || { cr5="FAIL(no Post thread tap)"; return; }
+  tap_text "$f" "Pay &amp; post" || tap_text "$f" "Post thread" || { cr5="FAIL(no pay button tap)"; return; }
   local sf="$OUT/hier-cr5-send-sheet.xml"
   if ! wait_sheet "$sf" 60; then cr5="FAIL(no wallet send sheet to abandon)"; capture_window "cr5"; return; fi
   log "cr5: wallet send sheet up; abandoning via HOME (no approval, nothing signed)"
@@ -1045,7 +1045,7 @@ cell_cr5() {
   sleep 1
   while [ "$elapsed" -lt 30 ]; do
     if dump_ui "$rf" && ! grep -q "Posting…" "$rf" && ! grep -q "Asking the host…" "$rf"; then
-      if grep -q 'text="Post thread"' "$rf" || grep -q 'text="New thread"' "$rf" || grep -q 'text="Title"' "$rf"; then
+      if grep -qE 'text="(Pay &amp; post|Post thread)"' "$rf" || grep -q 'text="New thread"' "$rf" || grep -q 'text="Title"' "$rf"; then
         resolved="yes"; break
       fi
     fi
@@ -1086,7 +1086,7 @@ cell_cr5() {
   fill_composer "$CR5_TITLE_RETRY" || { cr5="FAIL(retry: composer fill)"; return; }
   composer_to_review || { cr5="FAIL(retry: no review)"; return; }
   dump_ui "$f" || { cr5="FAIL(retry: no dump at review)"; return; }
-  tap_text "$f" "Post thread" || { cr5="FAIL(retry: no Post thread tap)"; return; }
+  tap_text "$f" "Pay &amp; post" || tap_text "$f" "Post thread" || { cr5="FAIL(retry: no pay button tap)"; return; }
   approve_sheet "cr5-retry-send" "Approve" || { cr5="FAIL(retry: send sheet never approved)"; capture_window "cr5-retry"; return; }
   # The send auto-broadcasts to the stub; the client then completes
   # against the host. Poll the host DB + the UI for the posted thread.
