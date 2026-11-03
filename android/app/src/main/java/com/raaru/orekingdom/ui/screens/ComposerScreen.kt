@@ -281,6 +281,7 @@ fun ComposerScreen(
             } else {
                 Spacer(Modifier.height(16.dp))
                 when (val p = currentPrep) {
+                    null -> Unit // unreachable: this branch renders only with a prep in hand
                     is ForumViewModel.ThreadPrep.Exempt -> {
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
