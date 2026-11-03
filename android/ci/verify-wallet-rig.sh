@@ -922,26 +922,57 @@ open_composer() { # 0 if the composer is up with Title/Body fields
   grep -q 'text="Title"' "$f" && grep -q 'text="Body"' "$f"
 }
 
+tap_edit_field() { # $1 = dump file, $2 = index (0-based) of the EditText node
+  local coords
+  coords="$(python3 - "$1" "$2" <<'PYEOF'
+import re, sys
+data = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+want = int(sys.argv[2])
+found = []
+for m in re.finditer(r"<node[^>]*>", data):
+    tag = m.group(0)
+    if 'class="android.widget.EditText"' in tag:
+        b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
+        if b:
+            found.append(((int(b.group(1)) + int(b.group(3))) // 2, (int(b.group(2)) + int(b.group(4))) // 2))
+if len(found) > want:
+    print(f"{found[want][0]} {found[want][1]}")
+PYEOF
+)"
+  if [ -n "$coords" ]; then adb shell input tap $coords; return 0; fi
+  return 1
+}
+
+type_into_field() { # $1 = dump file, $2 = field index, $3 = value, $4 = check substring
+  tap_edit_field "$1" "$2" || return 1
+  sleep 1
+  type_text "$3"
+  dump_ui "$1" || return 1
+  if grep -q "$4" "$1"; then return 0; fi
+  log "type_into_field: broadcast did not land in field $2 — retrying the broadcast once"
+  tap_edit_field "$1" "$2" || return 1
+  sleep 1
+  type_text "$3"
+  dump_ui "$1" || return 1
+  if grep -q "$4" "$1"; then return 0; fi
+  log "type_into_field: falling back to injected key events for field $2"
+  tap_edit_field "$1" "$2" || return 1
+  sleep 1
+  adb shell input text "$(printf '%s' "$3" | sed 's/ /%s/g')" >/dev/null 2>&1 || true
+  sleep 1
+  dump_ui "$1" || return 1
+  grep -q "$4" "$1"
+}
+
 fill_composer() { # $1 = title
   local f="$TMPD/comp-fill.xml"
   dump_ui "$f" || return 1
-  tap_text "$f" "Title" || return 1
-  sleep 1
-  type_text "$1"
-  # Self-check: the typed title must be readable in the field before
-  # anything downstream is graded on it (a dead IME must fail HERE,
-  # with the dump filed, not as a mysterious missing thread later).
-  dump_ui "$f" || return 1
-  if ! grep -q "$1" "$f"; then
-    log "fill_composer: title not in the field after typing — retrying the broadcast once"
-    type_text "$1"
-    dump_ui "$f" || return 1
-    grep -q "$1" "$f" || { cp "$f" "$OUT/hier-cr5-typefail.xml" || true; return 1; }
-  fi
-  dump_ui "$f" || return 1
-  tap_text "$f" "Body" || return 1
-  sleep 1
-  type_text "$CR5_BODY"
+  # The Flagship 6 composer renders Title/Body as standalone labels
+  # above their fields — tapping the label does not focus the field.
+  # Focus the EditText nodes directly (0 = Title, 1 = Body), and
+  # verify each value landed before grading anything downstream.
+  type_into_field "$f" 0 "$1" "$1" || { cp "$f" "$OUT/hier-cr5-typefail.xml" || true; return 1; }
+  type_into_field "$f" 1 "$CR5_BODY" "abandonment cell body" || { cp "$f" "$OUT/hier-cr5-typefail.xml" || true; return 1; }
   # Pay in SOL (the stub synthesis is exactest on the lamport leg)
   dump_ui "$f" || return 1
   if grep -q 'text="SOL"' "$f"; then tap_exact "$f" "SOL" || tap_text "$f" "SOL" || true; fi
