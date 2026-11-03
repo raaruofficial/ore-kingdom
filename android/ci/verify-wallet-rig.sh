@@ -525,11 +525,22 @@ signed_in_visible() { # $1 = dump file
   grep -q "You're signed in as" "$1" 2>/dev/null
 }
 
+dismiss_catchup() { # $1 = dump file (refreshed in place); the River's
+  # Catch-Up auto-presents once per process for a signed-in member.
+  if grep -q "To the River" "$1" 2>/dev/null; then
+    log "nav: Catch-Up screen is up — tapping To the River"
+    tap_text "$1" "To the River" || true
+    sleep 2
+    dump_ui "$1" || true
+  fi
+}
+
 goto_signin() { # lands on the SignIn screen from anywhere in the app
   launch_app
   local f="$TMPD/gs.xml"
   dump_ui "$f" || { log "goto_signin: FAILED — dump_ui produced no hierarchy (fg=$(fg_pkg))"; return 1; }
   if grep -q "Read this first" "$f"; then return 0; fi
+  dismiss_catchup "$f"
   # The River's member chip always routes to the sign-in screen: its
   # text is "Sign in" signed-out and the member's .skr name signed-in.
   if grep -q 'text="Sign in"' "$f"; then
@@ -890,6 +901,14 @@ open_composer() { # 0 if the composer is up with Title/Body fields
   local f="$TMPD/comp.xml"
   dump_ui "$f" || return 1
   if grep -q 'text="Title"' "$f" && grep -q 'text="Body"' "$f"; then return 0; fi
+  if grep -q "Read this first" "$f"; then
+    # Starting on the sign-in screen (the CR-5 setup ends there):
+    # BACK pops to the River.
+    adb shell input keyevent 4 >/dev/null 2>&1 || true
+    sleep 2
+    dump_ui "$f" || return 1
+  fi
+  dismiss_catchup "$f"
   tap_text "$f" "New thread" || { log "open_composer: no New thread control"; return 1; }
   sleep 2
   dump_ui "$f" || return 1
