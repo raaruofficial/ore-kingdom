@@ -1,5 +1,6 @@
 package com.raaru.orekingdom.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,14 +9,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -27,12 +36,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.raaru.orekingdom.data.ForumPayload
 import com.raaru.orekingdom.data.shortWallet
 import com.raaru.orekingdom.ui.ForumViewModel
+import com.raaru.orekingdom.ui.theme.OreAmber
+import com.raaru.orekingdom.ui.theme.OreEdge
+import com.raaru.orekingdom.ui.theme.OreGem
+import com.raaru.orekingdom.ui.theme.OreGemDim
+import com.raaru.orekingdom.ui.theme.OreSurface
+import com.raaru.orekingdom.ui.theme.labelCaps
+import com.raaru.orekingdom.ui.theme.tnum
 import com.raaru.orekingdom.util.AssetSpec
 import com.raaru.orekingdom.util.Assets
 import com.raaru.orekingdom.util.formatAssetAmount
@@ -93,6 +111,7 @@ fun ComposerScreen(
     var progress by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    val haptics = LocalHapticFeedback.current
     val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId }
     val isVipBoard = selectedCategory?.isVip == true
     // The caller's holder state as last served (payload flag preferred;
@@ -153,14 +172,31 @@ fun ComposerScreen(
                             invalidateQuote()
                         },
                         enabled = !paying,
+                        shape = RoundedCornerShape(50),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = OreAmber,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = !paying,
+                            selected = selectedCategoryId == category.id,
+                            borderColor = OreEdge,
+                            selectedBorderColor = OreAmber
+                        ),
                         label = {
-                            Text(
-                                (if (category.isVip) {
-                                    "🔒 "
-                                } else {
-                                    ""
-                                }) + category.name
-                            )
+                            if (category.isVip) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Rounded.Lock,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(category.name)
+                                }
+                            } else {
+                                Text(category.name)
+                            }
                         }
                     )
                     Spacer(Modifier.width(8.dp))
@@ -177,23 +213,32 @@ fun ComposerScreen(
             }
             if (!isVipBoard) {
                 Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Commercial thread", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "$50 flat instead of the thread fee — labeled COMMERCIAL on the board.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = OreSurface),
+                    border = BorderStroke(1.dp, OreEdge),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Commercial thread", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                "$50 flat instead of the thread fee — labeled COMMERCIAL on the board.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = commercial,
+                            onCheckedChange = {
+                                commercial = it
+                                invalidateQuote()
+                            },
+                            enabled = !paying && prep == null
                         )
                     }
-                    Switch(
-                        checked = commercial,
-                        onCheckedChange = {
-                            commercial = it
-                            invalidateQuote()
-                        },
-                        enabled = !paying && prep == null
-                    )
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -205,6 +250,13 @@ fun ComposerScreen(
                 },
                 label = { Text("Title") },
                 singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = OreSurface,
+                    unfocusedContainerColor = OreSurface,
+                    focusedBorderColor = OreAmber,
+                    unfocusedBorderColor = OreEdge
+                ),
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(12.dp))
@@ -216,6 +268,13 @@ fun ComposerScreen(
                 },
                 label = { Text("Body") },
                 minLines = 5,
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = OreSurface,
+                    unfocusedContainerColor = OreSurface,
+                    focusedBorderColor = OreAmber,
+                    unfocusedBorderColor = OreEdge
+                ),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -233,13 +292,19 @@ fun ComposerScreen(
                     }
                     if (callerPrestige == true && !commercial) {
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Prestige — no thread fee: Continue confirms your exemption " +
-                                "with the host; you won't be charged.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = OreGemDim),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "Prestige — no thread fee: Continue confirms your exemption " +
+                                    "with the host; you won't be charged.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = OreGem,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
                     }
                 }
                 if (error != null) {
@@ -274,13 +339,11 @@ fun ComposerScreen(
                 when (val p = currentPrep) {
                     null -> Unit // unreachable: this branch renders only with a prep in hand
                     is ForumViewModel.ThreadPrep.Exempt -> {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    p.note ?: "No payment is needed for this post.",
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                            }
+                        OrePlaque {
+                            Text(
+                                p.note ?: "No payment is needed for this post.",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
                         }
                         Spacer(Modifier.height(16.dp))
                         Button(
@@ -290,14 +353,12 @@ fun ComposerScreen(
                         ) { Text(if (paying) "Posting…" else "Post thread — no fee") }
                     }
                     ForumViewModel.ThreadPrep.SessionFree -> {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    "VIP board — as a prestige holder you post here with " +
-                                        "no payment session and no fee.",
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                            }
+                        OrePlaque {
+                            Text(
+                                "VIP board — as a prestige holder you post here with " +
+                                    "no payment session and no fee.",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
                         }
                         Spacer(Modifier.height(16.dp))
                         Button(
@@ -308,12 +369,22 @@ fun ComposerScreen(
                     }
                     is ForumViewModel.ThreadPrep.Quote -> {
                         val s = p.session
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
+                        OrePlaque {
                                 Text(
-                                    if (p.commercial) "Your commercial quote" else "Your thread-fee quote",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
+                                    if (p.commercial) {
+                                        "YOUR COMMERCIAL QUOTE"
+                                    } else {
+                                        "YOUR THREAD-FEE QUOTE"
+                                    },
+                                    style = MaterialTheme.typography.labelCaps,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    s.asset?.let { formatAssetAmount(s.amountBase, it) }
+                                        ?: s.amountBase.toString(),
+                                    style = MaterialTheme.typography.titleLarge.tnum(),
+                                    color = OreAmber
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 QuoteRow(
@@ -341,13 +412,15 @@ fun ComposerScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                            }
                         }
                         Spacer(Modifier.height(12.dp))
                         PaymentDisclosures(forPost = true)
                         Spacer(Modifier.height(16.dp))
                         Button(
-                            onClick = { execute(p) },
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                execute(p)
+                            },
                             enabled = !paying,
                             modifier = Modifier.fillMaxWidth()
                         ) {

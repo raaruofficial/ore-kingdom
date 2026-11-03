@@ -1,5 +1,8 @@
 package com.raaru.orekingdom.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,9 +12,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -24,6 +29,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -32,6 +39,11 @@ import com.raaru.orekingdom.data.PinCheckout
 import com.raaru.orekingdom.data.ServedPinSlot
 import com.raaru.orekingdom.data.shortWallet
 import com.raaru.orekingdom.ui.ForumViewModel
+import com.raaru.orekingdom.ui.theme.OreAmber
+import com.raaru.orekingdom.ui.theme.OreEdge
+import com.raaru.orekingdom.ui.theme.OreSurfaceRaised
+import com.raaru.orekingdom.ui.theme.labelCaps
+import com.raaru.orekingdom.ui.theme.tnum
 import com.raaru.orekingdom.util.AssetSpec
 import com.raaru.orekingdom.util.Assets
 import com.raaru.orekingdom.util.formatAssetAmount
@@ -76,6 +88,7 @@ fun PinBuyScreen(navController: NavController, vm: ForumViewModel, sender: Activ
     var progress by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var resultNote by remember { mutableStateOf<String?>(null) }
+    val haptics = LocalHapticFeedback.current
 
     LaunchedEffect(Unit) { vm.loadPinSlots() }
 
@@ -114,38 +127,69 @@ fun PinBuyScreen(navController: NavController, vm: ForumViewModel, sender: Activ
             )
             Spacer(Modifier.height(12.dp))
 
-            // The live spot state, from the getPinSlots read.
+            // The live spot state, from the getPinSlots read — one
+            // plaque per spot, mirroring the spotlight above the River.
             servedSlots?.let { slots ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(
-                            "The spots right now",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        slots.slots.forEach { slot ->
-                            when (slot) {
-                                is ServedPinSlot.Filled -> Text(
-                                    "Taken — “${slot.threadTitle}” until ${formatEpochMs(slot.endsAt)}",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                ServedPinSlot.Vacant -> Text(
-                                    "Open",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
+                Text(
+                    "THE SPOTS RIGHT NOW",
+                    style = MaterialTheme.typography.labelCaps,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    slots.slots.forEachIndexed { i, slot ->
+                        if (i > 0) Spacer(Modifier.width(12.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = OreSurfaceRaised
+                            ),
+                            border = BorderStroke(1.dp, OreEdge),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                when (slot) {
+                                    is ServedPinSlot.Filled -> {
+                                        Text(
+                                            "TAKEN",
+                                            style = MaterialTheme.typography.labelCaps,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(Modifier.height(6.dp))
+                                        Text(
+                                            "“${slot.threadTitle}”",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 2,
+                                            overflow = androidx.compose.ui.text.style
+                                                .TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            "until ${formatEpochMs(slot.endsAt)}",
+                                            style = MaterialTheme.typography.bodySmall.tnum(),
+                                            color =
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    ServedPinSlot.Vacant -> {
+                                        Text(
+                                            "OPEN",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = OreAmber,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                             }
                         }
-                        if (slots.deferredCount > 0) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "${slots.deferredCount} paid pin(s) are queued behind the current spots.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
+                }
+                if (slots.deferredCount > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "${slots.deferredCount} paid pin(s) are queued behind the current spots.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Spacer(Modifier.height(16.dp))
             }
@@ -196,29 +240,44 @@ fun PinBuyScreen(navController: NavController, vm: ForumViewModel, sender: Activ
                     ) { Text(if (paying) "Asking the host…" else "See the pin quote") }
                 }
             } else {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "Your pin quote",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        QuoteRow("Pin", formatUsdCents(quote.amountUsdCents))
-                        QuoteRow(
-                            "You pay",
-                            formatAssetAmount(quote.amountBase, quote.asset)
-                        )
-                        if (quote.asset == Assets.ORE) {
-                            QuoteRow("In grams", formatGrams(quote.amountBase))
-                        }
-                        QuoteRow("Runs", "${quote.hours} hours in the spotlight rotation")
-                        QuoteRow(
-                            "To",
-                            "The Relay, the kingdom treasury (${shortWallet(quote.destinationWallet)})"
-                        )
-                        if (earliestFree != null && servedSlots?.activeCount == servedSlots?.cap) {
-                            Spacer(Modifier.height(8.dp))
+                OrePlaque {
+                    Text(
+                        "YOUR PIN QUOTE",
+                        style = MaterialTheme.typography.labelCaps,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    QuoteRow("Pin", formatUsdCents(quote.amountUsdCents))
+                    QuoteRow(
+                        "You pay",
+                        formatAssetAmount(quote.amountBase, quote.asset)
+                    )
+                    if (quote.asset == Assets.ORE) {
+                        QuoteRow("In grams", formatGrams(quote.amountBase))
+                    }
+                    QuoteRow("Runs", "${quote.hours} hours in the spotlight rotation")
+                    QuoteRow(
+                        "To",
+                        "The Relay, the kingdom treasury (${shortWallet(quote.destinationWallet)})"
+                    )
+                }
+                if (earliestFree != null && servedSlots?.activeCount == servedSlots?.cap) {
+                    Spacer(Modifier.height(12.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        border = BorderStroke(1.dp, OreEdge),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(modifier = Modifier.padding(14.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(44.dp)
+                                    .background(OreAmber, RoundedCornerShape(2.dp))
+                            )
+                            Spacer(Modifier.width(12.dp))
                             Text(
                                 "Both spots are taken right now. If they are still taken " +
                                     "when your payment confirms, your pin is queued and " +
@@ -253,6 +312,7 @@ fun PinBuyScreen(navController: NavController, vm: ForumViewModel, sender: Activ
                     Spacer(Modifier.height(16.dp))
                     Button(
                         onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             error = null
                             progress = null
                             attempted = true

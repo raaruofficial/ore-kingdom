@@ -19,13 +19,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.raaru.orekingdom.data.PaySession
 import com.raaru.orekingdom.data.shortWallet
 import com.raaru.orekingdom.ui.ForumViewModel
+import com.raaru.orekingdom.ui.theme.OreAmber
+import com.raaru.orekingdom.ui.theme.labelCaps
+import com.raaru.orekingdom.ui.theme.tnum
 import com.raaru.orekingdom.util.Assets
 import com.raaru.orekingdom.util.formatAssetAmount
 import com.solana.mobilewalletadapter.clientlib.ActivityResultSender
@@ -49,6 +55,7 @@ fun JoinScreen(navController: NavController, vm: ForumViewModel, sender: Activit
     var progress by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var joined by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
 
     Scaffold(topBar = { OreTopBar("Join the kingdom", navController, showBack = true) }) { padding ->
         Column(
@@ -59,6 +66,13 @@ fun JoinScreen(navController: NavController, vm: ForumViewModel, sender: Activit
                 .verticalScroll(rememberScrollState())
         ) {
             if (joined) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    OreCrownMark(48.dp)
+                }
+                Spacer(Modifier.height(16.dp))
                 Text(
                     "You're a member of the kingdom.",
                     style = MaterialTheme.typography.titleLarge,
@@ -80,8 +94,7 @@ fun JoinScreen(navController: NavController, vm: ForumViewModel, sender: Activit
 
             Text(
                 "Membership is one payment: 5,000 SKR, once. No subscription.",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                style = MaterialTheme.typography.headlineSmall
             )
             Spacer(Modifier.height(8.dp))
             Text(
@@ -110,38 +123,43 @@ fun JoinScreen(navController: NavController, vm: ForumViewModel, sender: Activit
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (paying) "Asking the host…" else "See the join quote") }
             } else {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "Your join quote",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        QuoteRow(
-                            "Join price",
-                            formatAssetAmount(quote.amountBase, quote.asset ?: Assets.SKR)
-                        )
-                        QuoteRow("Due", "Once — no subscription")
-                        QuoteRow(
-                            "To",
-                            "The Relay, the kingdom treasury (${shortWallet(quote.destination)})"
-                        )
-                        QuoteRow("Pay by", formatEpochMs(quote.payExpiresAt))
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "SKR is the price of record for the join. The host does not " +
-                                "quote a dollar rate for it, so no dollar figure is shown.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                OrePlaque {
+                    Text(
+                        "YOUR JOIN QUOTE",
+                        style = MaterialTheme.typography.labelCaps,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        formatAssetAmount(quote.amountBase, quote.asset ?: Assets.SKR),
+                        style = MaterialTheme.typography.titleLarge.tnum(),
+                        color = OreAmber
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    QuoteRow(
+                        "Join price",
+                        formatAssetAmount(quote.amountBase, quote.asset ?: Assets.SKR)
+                    )
+                    QuoteRow("Due", "Once — no subscription")
+                    QuoteRow(
+                        "To",
+                        "The Relay, the kingdom treasury (${shortWallet(quote.destination)})"
+                    )
+                    QuoteRow("Pay by", formatEpochMs(quote.payExpiresAt))
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "SKR is the price of record for the join. The host does not " +
+                            "quote a dollar rate for it, so no dollar figure is shown.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 PaymentDisclosures()
                 Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         error = null
                         progress = null
                         vm.executeJoin(

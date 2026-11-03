@@ -7,13 +7,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,7 +23,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -31,6 +35,11 @@ import com.raaru.orekingdom.data.TipCheckout
 import com.raaru.orekingdom.data.shortWallet
 import com.raaru.orekingdom.data.tipConfirmArmed
 import com.raaru.orekingdom.ui.ForumViewModel
+import com.raaru.orekingdom.ui.theme.OreAmber
+import com.raaru.orekingdom.ui.theme.OreEdge
+import com.raaru.orekingdom.ui.theme.OreSurface
+import com.raaru.orekingdom.ui.theme.labelCaps
+import com.raaru.orekingdom.ui.theme.tnum
 import com.raaru.orekingdom.util.AssetSpec
 import com.raaru.orekingdom.util.Assets
 import com.raaru.orekingdom.util.TIP_MAX_USD_CENTS
@@ -72,6 +81,7 @@ fun TipScreen(
     var progress by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var sent by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
 
     Scaffold(topBar = { OreTopBar("Tip", navController, showBack = true) }) { padding ->
         Column(
@@ -82,6 +92,13 @@ fun TipScreen(
                 .verticalScroll(rememberScrollState())
         ) {
             if (sent) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    OreCrownMark(48.dp)
+                }
+                Spacer(Modifier.height(16.dp))
                 Text(
                     "Tip sent — thank you.",
                     style = MaterialTheme.typography.titleLarge,
@@ -117,7 +134,15 @@ fun TipScreen(
                     onValueChange = { amountText = it; error = null },
                     label = { Text("Tip amount (USD)") },
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.headlineSmall.tnum(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = OreSurface,
+                        unfocusedContainerColor = OreSurface,
+                        focusedBorderColor = OreAmber,
+                        unfocusedBorderColor = OreEdge
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
@@ -157,31 +182,47 @@ fun TipScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(8.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                OrePlaque {
+                    Text(
+                        "TO",
+                        style = MaterialTheme.typography.labelCaps,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        quote.recipientSkrName ?: shortWallet(quote.recipientWallet),
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    QuoteRow("Tip", formatAssetAmount(quote.tipAmountBase, quote.asset))
+                    if (quote.asset == Assets.ORE) {
+                        QuoteRow("Tip in grams", formatGrams(quote.tipAmountBase))
+                    }
+                    QuoteRow("Tip value", formatUsdCents(quote.amountUsdCents))
+                    val fee = quote.fee
+                    if (fee != null) {
                         QuoteRow(
-                            "To",
-                            quote.recipientSkrName ?: shortWallet(quote.recipientWallet)
+                            "Platform fee",
+                            "${formatAssetAmount(fee.amountBase, fee.asset ?: quote.asset)} " +
+                                "(${formatUsdCents(fee.usdCents)})"
                         )
-                        QuoteRow("Tip", formatAssetAmount(quote.tipAmountBase, quote.asset))
+                    }
+                    val total = quote.reviewTotalBase()
+                    if (total != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "TOTAL DEBIT",
+                            style = MaterialTheme.typography.labelCaps,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            formatAssetAmount(total, quote.asset),
+                            style = MaterialTheme.typography.titleLarge.tnum(),
+                            color = OreAmber
+                        )
                         if (quote.asset == Assets.ORE) {
-                            QuoteRow("Tip in grams", formatGrams(quote.tipAmountBase))
-                        }
-                        QuoteRow("Tip value", formatUsdCents(quote.amountUsdCents))
-                        val fee = quote.fee
-                        if (fee != null) {
-                            QuoteRow(
-                                "Platform fee",
-                                "${formatAssetAmount(fee.amountBase, fee.asset ?: quote.asset)} " +
-                                    "(${formatUsdCents(fee.usdCents)})"
-                            )
-                        }
-                        val total = quote.reviewTotalBase()
-                        if (total != null) {
-                            QuoteRow("Total debit", formatAssetAmount(total, quote.asset))
-                            if (quote.asset == Assets.ORE) {
-                                QuoteRow("Total in grams", formatGrams(total))
-                            }
+                            QuoteRow("Total in grams", formatGrams(total))
                         }
                     }
                 }
@@ -217,6 +258,7 @@ fun TipScreen(
                         Spacer(Modifier.height(16.dp))
                         Button(
                             onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 error = null
                                 progress = null
                                 attempted = true
