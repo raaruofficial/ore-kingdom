@@ -36,10 +36,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Neuter the WHOLE KFC-008 cure (faulted control build — reconciler + refire/re-issue machinery + claim race + backstop)
         run: git apply android/ci/control-neuter.patch
+      # suite ctl = CR-3 only, one rep: the predicted control failure is
+      # a hang, and one hung rep proves the shape. Scoping the control
+      # to the single cell keeps it cheap under the estate CI line.
       - uses: ./.github/actions/wallet-rig
         with:
           api-level: 35
-          suite: kfc008
+          suite: ctl
           avd-name: ok-rig-control-35
           mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
           expect: fail

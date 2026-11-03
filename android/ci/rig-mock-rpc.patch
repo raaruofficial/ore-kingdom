@@ -1,3 +1,29 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 6677ae0..c643f56 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -7,6 +7,11 @@
+         android:required="true" />
+     <uses-permission android:name="android.permission.CAMERA"/>
+ 
++    <!-- RIG (Ore Kingdom CI wallet rig): test equipment only. usesCleartextTraffic
++         is enabled so the send path can reach the rig stub chain at
++         http://10.0.2.2:18741 on the emulator host gateway; the stock
++         default policy denies cleartext and the broadcast dies with
++         UnknownServiceException before it leaves the wallet. -->
+     <application
+         android:name=".MwalletApplication"
+         android:allowBackup="true"
+@@ -14,7 +19,8 @@
+         android:label="@string/app_name"
+         android:roundIcon="@mipmap/ic_launcher_round"
+         android:supportsRtl="true"
+-        android:theme="@style/Theme.MwalletApp" >
++        android:theme="@style/Theme.MwalletApp"
++        android:usesCleartextTraffic="true" >
+         <activity
+             android:name=".BarcodeScannerActivity"
+             android:exported="false"
 diff --git a/app/src/main/java/com/solana/mwallet/MobileWalletAdapterViewModel.kt b/app/src/main/java/com/solana/mwallet/MobileWalletAdapterViewModel.kt
 index 0eb3158..e015173 100644
 --- a/app/src/main/java/com/solana/mwallet/MobileWalletAdapterViewModel.kt

@@ -137,28 +137,54 @@ marker_present() {
   esac
 }
 
-XML=""
-STATE=""
-: > "$EVIDENCE/state-trace.txt"
-for i in $(seq 1 12); do
-  sleep 6
-  RAW="$(adb shell uiautomator dump /sdcard/window_dump.xml 2>&1)"
-  XML="$(adb exec-out cat /sdcard/window_dump.xml 2>/dev/null)" || XML=""
-  # Guard: a stale dump file from a failed dump must not pose as fresh —
-  # the uiautomator output line announces a successful write.
-  grep -q "dumped to" <<<"$RAW" || XML=""
-  STATE="$(classify "$XML")"
-  NODES="$(grep -o 'text="[^"]\+"' <<<"$XML" | grep -vc 'text=""' || true)"
-  echo "poll $i: state=$STATE text_nodes=${NODES:-0} dump_msg=$(head -1 <<<"$RAW")" >> "$EVIDENCE/state-trace.txt"
-  note "poll $i: state=$STATE text_nodes=${NODES:-0}"
-  if [ -n "$XML" ]; then printf '%s' "$XML" > "$EVIDENCE/dump_poll$i.xml"; fi
-  if marker_present "$STATE"; then
-    note "variant marker found on poll $i (state=$STATE)"
-    break
-  fi
+settle_poll() { # $1 = trace file, $2 = dump prefix; sets XML/STATE; 0 if the marker rendered
   XML=""
-done
-[ -n "$XML" ] || fail "expected UI state for variant '$VARIANT' never rendered; state trace: $(tr '\n' ';' < "$EVIDENCE/state-trace.txt")"
+  STATE=""
+  : > "$1"
+  local i RAW NODES
+  for i in $(seq 1 12); do
+    sleep 6
+    RAW="$(adb shell uiautomator dump /sdcard/window_dump.xml 2>&1)"
+    XML="$(adb exec-out cat /sdcard/window_dump.xml 2>/dev/null)" || XML=""
+    # Guard: a stale dump file from a failed dump must not pose as fresh —
+    # the uiautomator output line announces a successful write.
+    grep -q "dumped to" <<<"$RAW" || XML=""
+    STATE="$(classify "$XML")"
+    NODES="$(grep -o 'text="[^"]\+"' <<<"$XML" | grep -vc 'text=""' || true)"
+    echo "poll $i: state=$STATE text_nodes=${NODES:-0} dump_msg=$(head -1 <<<"$RAW")" >> "$1"
+    note "poll $i: state=$STATE text_nodes=${NODES:-0} (trace $1)"
+    if [ -n "$XML" ]; then printf '%s' "$XML" > "$EVIDENCE/$2$i.xml"; fi
+    if marker_present "$STATE"; then
+      note "variant marker found on poll $i (state=$STATE)"
+      return 0
+    fi
+    XML=""
+  done
+  return 1
+}
+
+if ! settle_poll "$EVIDENCE/state-trace.txt" "dump_poll"; then
+  # Retry-once, online/nowallet only, and only for the proven infra
+  # signature: twelve polls of UNREACHABLE — the app alive throughout,
+  # rendering its honest error card because the host fetch never
+  # answered from this emulator instance (base runs 41572449772 and
+  # 41590990654 both died exactly this way while a sibling leg fetched
+  # fine minutes apart on another boot of the same image). The retry
+  # must still render READY on its own polls — nothing is waived —
+  # and both traces are filed; the verdict records the retry.
+  if [ "$VARIANT" != "offline" ] && [ "$STATE" = "UNREACHABLE" ]; then
+    note "attempt 1: host unreachable from this instance for 12 polls — relaunching once (infra-flake retry)"
+    adb shell am force-stop "$PKG" || true
+    adb shell am start -W -n "$ACTIVITY" | tee "$EVIDENCE/launch-retry.txt" || true
+    if settle_poll "$EVIDENCE/state-trace-attempt2.txt" "dump_retry_poll"; then
+      echo "note: marker rendered only on the infra-flake retry (attempt 1 was all-UNREACHABLE; attempt 2 trace in state-trace-attempt2.txt)" >> "$EVIDENCE/state-trace.txt"
+    else
+      fail "expected UI state for variant '$VARIANT' never rendered (incl. one infra-flake retry); state trace: $(tr '\n' ';' < "$EVIDENCE/state-trace.txt") retry trace: $(tr '\n' ';' < "$EVIDENCE/state-trace-attempt2.txt")"
+    fi
+  else
+    fail "expected UI state for variant '$VARIANT' never rendered; state trace: $(tr '\n' ';' < "$EVIDENCE/state-trace.txt")"
+  fi
+fi
 printf '%s' "$XML" > "$EVIDENCE/window_dump.xml"
 
 # Offline carries one extra marker: the Retry action on the error card.

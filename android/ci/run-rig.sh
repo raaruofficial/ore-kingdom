@@ -3,7 +3,9 @@
 # script input as a single sh -c line — a multi-line script arrives
 # truncated and dies with a syntax error; run 41175859181's lesson,
 # inherited from the Citadel rig).
-#   $1 = suite (core|kfc008|all)  $2 = api level  $3 = expect (pass|fail)
+#   $1 = suite (core|kfc008|ctl|all)  $2 = api level  $3 = expect (pass|fail)
+#   ctl = the KFC-008 control scope: CR-3 only, one rep (the predicted
+#   failure on a cure-neutered build is a hang; one hung rep proves it).
 # Runs from the repo root; evidence lands at the repo root so the
 # upload step finds it at a stable path.
 set -u

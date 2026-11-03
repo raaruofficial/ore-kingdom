@@ -829,14 +829,14 @@ abandon_connect_rep() { # $1 = rep; echoes "PASS|FAIL <detail>" on stdout's last
 cell_cr3() {
   log "=== CR-3 KFC-008 abandonment (connect) x3 reps ==="
   local results="" rep verdict
-  for rep in 1 2 3; do
+  for rep in $(seq 1 "${CR3_REPS:-3}"); do
     verdict="$(abandon_connect_rep "$rep" | tail -n 1)"
     log "cr3 rep $rep verdict: $verdict"
     results="$results | rep$rep: $verdict"
   done
   case "$results" in
     *FAIL*) cr3="FAIL($results )" ;;
-    *)      cr3="PASS(all 3 reps: resolution + retry-to-signed-in in-process$results )" ;;
+    *)      cr3="PASS(all ${CR3_REPS:-3} reps: resolution + retry-to-signed-in in-process$results )" ;;
   esac
   log "cr3: $cr3"
 }
@@ -1122,6 +1122,7 @@ cell_cr5() {
 case "$SUITE" in
   core)   cell_cr1; cell_cr2 ;;
   kfc008) cell_cr3; cell_cr4; cell_cr5 ;;
+  ctl)    CR3_REPS=1; cell_cr3 ;;
   all)    cell_cr1; cell_cr2; cell_cr3; cell_cr4; cell_cr5 ;;
   *) log "unknown SUITE=$SUITE"; exit 2 ;;
 esac
@@ -1160,6 +1161,7 @@ done
 case "$SUITE" in
   core)   required="$cr1 $cr2" ;;
   kfc008) required="$cr3 $cr4 $cr5" ;;
+  ctl)    required="$cr3" ;;
   all)    required="$cr1 $cr2 $cr3 $cr4 $cr5" ;;
   *)      required="" ;;
 esac
