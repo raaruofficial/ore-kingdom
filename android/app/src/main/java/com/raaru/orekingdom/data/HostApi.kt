@@ -110,23 +110,39 @@ class HostApi(private val baseUrl: String = BuildConfig.HOST_URL) {
      * (nullable), categories, all visible public threads in the host's
      * order (pinned first, then updatedAt desc). wallet is optional;
      * cold browsing passes none, exactly as the sealed build behaves.
+     *
+     * M2: an optional SIWS proof rides along. Reads stay public, but the
+     * wrapper releases VIP-board content only to a SIWS-verified
+     * prestige holder (M2_HOST_REPORT §4b) — the proof is verified and
+     * consumed by the wrapper, never forwarded to the bundle.
      */
     suspend fun listForum(
         wallet: String? = null,
         categoryId: Int? = null,
-        search: String? = null
+        search: String? = null,
+        siwsIdentity: JSONObject? = null
     ): ApiResult<JSONObject> {
         val args = JSONObject()
         wallet?.let { args.put("wallet", it) }
         categoryId?.let { args.put("categoryId", it) }
         search?.takeIf { it.isNotBlank() }?.let { args.put("search", it) }
+        siwsIdentity?.let { args.put("siwsIdentity", it) }
         return call("listForum", args)
     }
 
     /** Thread + replies (actions.ts:718). wallet is a required arg in
-     *  the bundle schema; cold browsing passes the empty string. */
-    suspend fun getThread(wallet: String, threadId: Int): ApiResult<JSONObject> =
-        call("getThread", JSONObject().put("wallet", wallet).put("threadId", threadId))
+     *  the bundle schema; cold browsing passes the empty string. A SIWS
+     *  proof unlocks a VIP-board thread for a verified holder, exactly
+     *  as on listForum. */
+    suspend fun getThread(
+        wallet: String,
+        threadId: Int,
+        siwsIdentity: JSONObject? = null
+    ): ApiResult<JSONObject> {
+        val args = JSONObject().put("wallet", wallet).put("threadId", threadId)
+        siwsIdentity?.let { args.put("siwsIdentity", it) }
+        return call("getThread", args)
+    }
 
     /** Membership state read (actions.ts:460). */
     suspend fun getSubscriptionStatus(wallet: String): ApiResult<JSONObject> =
@@ -147,4 +163,105 @@ class HostApi(private val baseUrl: String = BuildConfig.HOST_URL) {
         }
         return call("markNotificationsRead", args)
     }
+
+    // ---------- M2: nav core set + composer (staging wrapper contract) ----------
+
+    /**
+     * The B2 identity carriage (wrapper server.ts: the bundle's
+     * authenticateSiws field shape, minus wallet — the acting wallet is
+     * derived from the proof, never trusted from args). Gated actions
+     * and VIP read release both take exactly this object.
+     */
+    fun siwsIdentity(message: ByteArray, signature: ByteArray, publicKey: ByteArray): JSONObject {
+        fun b64(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        return JSONObject()
+            .put("messageBase64", b64(message))
+            .put("signatureBase64", b64(signature))
+            .put("publicKeyBase64", b64(publicKey))
+    }
+
+    /**
+     * R8 — the Unanswered Rail (wrapper-native listUnanswered): zero-reply
+     * threads computed server-side with listForum's visibility predicate
+     * minus the VIP board, longest-waiting first. Entries are
+     * listForum-shaped summaries; {threads, total}.
+     */
+    suspend fun listUnanswered(wallet: String? = null): ApiResult<JSONObject> {
+        val args = JSONObject()
+        wallet?.let { args.put("wallet", it) }
+        return call("listUnanswered", args)
+    }
+
+    /**
+     * R9 — the Catch-Up read (wrapper-native getCatchUp, SIWS-gated).
+     * A pure function of (member, server watermark): the read never
+     * moves the watermark; the response's `through` is what the client
+     * advances with after display.
+     */
+    suspend fun getCatchUp(wallet: String, siwsIdentity: JSONObject): ApiResult<JSONObject> =
+        call(
+            "getCatchUp",
+            JSONObject().put("wallet", wallet).put("siwsIdentity", siwsIdentity)
+        )
+
+    /** R9 — the only watermark mover (wrapper-native advanceCatchUp,
+     *  SIWS-gated): sets the watermark to the read's `through`, forward
+     *  only; a repeat advance with the same value is a host no-op. */
+    suspend fun advanceCatchUp(
+        wallet: String,
+        through: Long,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "advanceCatchUp",
+            JSONObject()
+                .put("wallet", wallet)
+                .put("through", through)
+                .put("siwsIdentity", siwsIdentity)
+        )
+
+    /**
+     * Composer — createThread (bundle actions.ts:746) through the
+     * wrapper's post gate (B2 SIWS-gated; the wrapper re-derives the
+     * acting wallet from the proof). The result rides in {data} as
+     * {ok, id?, error?} — callers must read the ok flag. Payment-session
+     * wiring (the thread fee for non-holders) is M3; a prestige holder's
+     * thread passes the gate session-free by the wrapper's own status
+     * read, and a VIP-board thread is a createThread into the VIP
+     * category.
+     */
+    suspend fun createThread(
+        wallet: String,
+        categoryId: Int,
+        title: String,
+        body: String,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "createThread",
+            JSONObject()
+                .put("wallet", wallet)
+                .put("categoryId", categoryId)
+                .put("title", title)
+                .put("body", body)
+                .put("audience", "public")
+                .put("siwsIdentity", siwsIdentity)
+        )
+
+    /** Composer — createReply (bundle actions.ts:789), same gate
+     *  discipline as createThread. {data} carries {ok, error?}. */
+    suspend fun createReply(
+        wallet: String,
+        threadId: Int,
+        body: String,
+        siwsIdentity: JSONObject
+    ): ApiResult<JSONObject> =
+        call(
+            "createReply",
+            JSONObject()
+                .put("wallet", wallet)
+                .put("threadId", threadId)
+                .put("body", body)
+                .put("siwsIdentity", siwsIdentity)
+        )
 }

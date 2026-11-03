@@ -21,6 +21,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.raaru.orekingdom.ui.ForumViewModel
+import com.raaru.orekingdom.ui.screens.CatchUpScreen
+import com.raaru.orekingdom.ui.screens.ComposerScreen
+import com.raaru.orekingdom.ui.screens.InboxScreen
 import com.raaru.orekingdom.ui.screens.SignInScreen
 import com.raaru.orekingdom.ui.screens.ThreadListScreen
 import com.raaru.orekingdom.ui.screens.ThreadScreen
@@ -86,17 +89,30 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     NavHost(navController = navController, startDestination = "home") {
-                        composable("home") { ThreadListScreen(navController, vm) }
+                        composable("home") {
+                            ThreadListScreen(navController, vm, walletSender)
+                        }
                         composable(
                             "thread/{threadId}",
                             arguments = listOf(navArgument("threadId") { type = NavType.IntType })
                         ) { entry ->
                             ThreadScreen(
-                                navController, vm,
+                                navController, vm, walletSender,
                                 entry.arguments?.getInt("threadId") ?: 0
                             )
                         }
                         composable("signin") { SignInScreen(navController, vm, walletSender) }
+                        composable("inbox") { InboxScreen(navController, vm) }
+                        composable("catchup") { CatchUpScreen(navController, vm) }
+                        composable(
+                            "compose/{categoryId}",
+                            arguments = listOf(navArgument("categoryId") { type = NavType.IntType })
+                        ) { entry ->
+                            ComposerScreen(
+                                navController, vm, walletSender,
+                                entry.arguments?.getInt("categoryId") ?: 0
+                            )
+                        }
                     }
                 }
             }

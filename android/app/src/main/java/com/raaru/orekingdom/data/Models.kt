@@ -74,6 +74,11 @@ data class ForumThread(
     val isLocked: Boolean,
     val isSeed: Boolean,
     val isAnnouncement: Boolean,
+    /** The wrapper's commercial marker (commercial_threads is the marker
+     *  of record). Parsed tolerantly: the staging wrapper records the
+     *  marker but does not yet serve it on reads — see M2_CLIENT_REPORT —
+     *  so this is false until the host emits it, never guessed. */
+    val isCommercial: Boolean,
     val likes: Int,
     val replies: Int,
     val createdAt: String
@@ -97,6 +102,7 @@ data class ForumThread(
             isLocked = o.optBoolean("isLocked"),
             isSeed = o.optBoolean("isSeed"),
             isAnnouncement = o.optBoolean("isAnnouncement"),
+            isCommercial = o.optBoolean("isCommercial"),
             likes = o.optInt("likes"),
             replies = o.optInt("replies"),
             createdAt = o.optString("createdAt")
@@ -216,6 +222,209 @@ data class ThreadDetail(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// M2 models — Inbox (R10), Catch-Up (R9), pin slots (pin spec).
+// Shapes are the staging wrapper's / bundle's served payloads
+// (M2_HOST_REPORT + actions.ts listNotifications), parsed tolerantly.
+// ---------------------------------------------------------------------------
+
+/** One inbox entry (bundle listNotifications, actions.ts:841). The type
+ *  enum is the bundle's: thread_reply / reply_reply / tip / mention /
+ *  founder_poll / founding_milestone. Read state is server-held. */
+data class NotificationItem(
+    val id: Int,
+    val type: String,
+    val title: String,
+    val detail: String,
+    val threadId: Int?,
+    val read: Boolean,
+    val createdAt: String
+) {
+    companion object {
+        fun fromJson(o: JSONObject) = NotificationItem(
+            id = o.optInt("id"),
+            type = o.optString("type"),
+            title = o.optString("title"),
+            detail = o.optString("detail"),
+            threadId = if (o.isNull("threadId")) null else o.optInt("threadId"),
+            read = o.optBoolean("read"),
+            createdAt = o.optString("createdAt")
+        )
+    }
+}
+
+data class InboxPayload(
+    val unread: Int,
+    val items: List<NotificationItem>
+) {
+    companion object {
+        fun fromJson(o: JSONObject): InboxPayload {
+            val items = o.optJSONArray("items")
+            return InboxPayload(
+                unread = o.optInt("unread"),
+                items = (0 until (items?.length() ?: 0)).mapNotNull {
+                    items?.optJSONObject(it)?.let { n -> NotificationItem.fromJson(n) }
+                }
+            )
+        }
+    }
+}
+
+data class CatchUpThread(
+    val id: Int,
+    val title: String,
+    val categoryName: String,
+    val authorName: String,
+    val createdAt: String
+) {
+    companion object {
+        fun fromJson(o: JSONObject) = CatchUpThread(
+            id = o.optInt("id"),
+            title = o.optString("title"),
+            categoryName = o.optString("categoryName", "Forum"),
+            authorName = o.optString("authorName", "Member"),
+            createdAt = o.optString("createdAt")
+        )
+    }
+}
+
+data class CatchUpReply(
+    val id: Int,
+    val threadId: Int,
+    val threadTitle: String,
+    val authorName: String,
+    val createdAt: String
+) {
+    companion object {
+        fun fromJson(o: JSONObject) = CatchUpReply(
+            id = o.optInt("id"),
+            threadId = o.optInt("threadId"),
+            threadTitle = o.optString("threadTitle"),
+            authorName = o.optString("authorName", "Member"),
+            createdAt = o.optString("createdAt")
+        )
+    }
+}
+
+data class CatchUpTip(
+    val id: Int,
+    val threadId: Int?,
+    val replyId: Int?,
+    val asset: String,
+    /** Base units as a string — the wrapper serves the integer as text. */
+    val amountBaseUnits: String,
+    val senderName: String,
+    val createdAt: String
+) {
+    companion object {
+        fun fromJson(o: JSONObject) = CatchUpTip(
+            id = o.optInt("id"),
+            threadId = if (o.isNull("threadId")) null else o.optInt("threadId"),
+            replyId = if (o.isNull("replyId")) null else o.optInt("replyId"),
+            asset = o.optString("asset"),
+            amountBaseUnits = o.optString("amountBaseUnits"),
+            senderName = o.optString("senderName", "Member"),
+            createdAt = o.optString("createdAt")
+        )
+    }
+}
+
+/** A pin change in the Catch-Up. The host derives exactly two honest
+ *  event kinds — "activated" and "expired"; rotation is the client-side
+ *  display of the active set, not an event (M2_HOST_REPORT ambiguity 5). */
+data class CatchUpPinChange(
+    val type: String,
+    val pinId: Int,
+    val threadId: Int,
+    val threadTitle: String?,
+    val startsAt: String,
+    val endsAt: String
+) {
+    companion object {
+        fun fromJson(o: JSONObject) = CatchUpPinChange(
+            type = o.optString("type"),
+            pinId = o.optInt("pinId"),
+            threadId = o.optInt("threadId"),
+            threadTitle = if (o.isNull("threadTitle")) null else o.optString("threadTitle"),
+            startsAt = o.optString("startsAt"),
+            endsAt = o.optString("endsAt")
+        )
+    }
+}
+
+data class CatchUp(
+    /** Epoch ms — the member's server-held last-seen watermark. */
+    val watermark: Long,
+    /** Epoch ms — this read's server time; the client advances with
+     *  exactly this value after display (M2 host contract). */
+    val through: Long,
+    val hasNews: Boolean,
+    val newThreads: List<CatchUpThread>,
+    val repliesToMine: List<CatchUpReply>,
+    val tipsReceived: List<CatchUpTip>,
+    val pinChanges: List<CatchUpPinChange>
+) {
+    val totalNews: Int
+        get() = newThreads.size + repliesToMine.size + tipsReceived.size + pinChanges.size
+
+    companion object {
+        fun fromJson(o: JSONObject): CatchUp {
+            fun <T> list(key: String, parse: (JSONObject) -> T): List<T> {
+                val arr = o.optJSONArray(key)
+                return (0 until (arr?.length() ?: 0)).mapNotNull {
+                    arr?.optJSONObject(it)?.let(parse)
+                }
+            }
+            return CatchUp(
+                watermark = o.optLong("watermark"),
+                through = o.optLong("through"),
+                hasNews = o.optBoolean("hasNews"),
+                newThreads = list("newThreads") { CatchUpThread.fromJson(it) },
+                repliesToMine = list("repliesToMine") { CatchUpReply.fromJson(it) },
+                tipsReceived = list("tipsReceived") { CatchUpTip.fromJson(it) },
+                pinChanges = list("pinChanges") { CatchUpPinChange.fromJson(it) }
+            )
+        }
+    }
+}
+
+/** The ruled pin-slot capacity (package: pin_slot_cap = 2). The two live
+ *  pins rotate through the single spotlight above the River; a vacant
+ *  slot renders as the house availability ad — never an empty frame. */
+const val PIN_SLOT_COUNT = 2
+
+sealed interface PinSlot {
+    data class Filled(val thread: ForumThread) : PinSlot
+    data object Vacant : PinSlot
+}
+
+/**
+ * Derives the slot strip from the one pin read the host serves: the
+ * full (unfiltered) listForum payload, whose threads carry
+ * isPaidPinned / paidPinEndsAt. There is no slot-state read on the
+ * host (M2_CLIENT_REPORT flags it); this derivation uses only served
+ * data — active pins first by soonest end, padded with vacant slots
+ * to the ruled capacity.
+ */
+fun pinSlots(payload: ForumPayload): List<PinSlot> {
+    val active = payload.threads
+        .filter { it.isPaidPinned }
+        .sortedBy { it.paidPinEndsAt ?: "" }
+        .take(PIN_SLOT_COUNT)
+    val slots = mutableListOf<PinSlot>()
+    active.forEach { slots.add(PinSlot.Filled(it)) }
+    while (slots.size < PIN_SLOT_COUNT) slots.add(PinSlot.Vacant)
+    return slots
+}
+
+/** The VIP board is the category whose slug matches the host's
+ *  OK_VIP_BOARD_SLUG (wrapper default "vip"). No such category = the
+ *  host has no VIP surface and nothing renders locked. */
+const val VIP_BOARD_SLUG = "vip"
+
+fun vipCategory(payload: ForumPayload): Category? =
+    payload.categories.firstOrNull { it.slug == VIP_BOARD_SLUG }
 
 fun shortWallet(wallet: String?): String {
     if (wallet.isNullOrBlank()) return "—"
