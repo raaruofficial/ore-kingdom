@@ -37,9 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.raaru.orekingdom.data.ForumPayload
 import com.raaru.orekingdom.data.ServedPinSlot
-import com.raaru.orekingdom.data.pinSlots
 import com.raaru.orekingdom.data.shortDate
-import com.raaru.orekingdom.data.vipCategory
 import com.raaru.orekingdom.ui.ForumViewModel
 import com.solana.mobilewalletadapter.clientlib.ActivityResultSender
 
@@ -126,7 +124,10 @@ fun ThreadListScreen(
                     if (state.stale) {
                         StaleBanner(onRetry = { vm.loadForum() })
                     }
-                    val vip = vipCategory(payload)
+                    val boardView = riverView as? ForumViewModel.RiverView.Board
+                    val selectedBoardCategory = boardView?.let { view ->
+                        payload.categories.firstOrNull { it.id == view.categoryId }
+                    }
                     // Filter views over the one payload.
                     Row(
                         modifier = Modifier
@@ -154,7 +155,7 @@ fun ThreadListScreen(
                                 },
                                 label = {
                                     Text(
-                                        (if (category.id == vip?.id) "🔒 " else "") +
+                                        (if (category.isVip) "🔒 " else "") +
                                             "${category.name} (${category.count})"
                                     )
                                 }
@@ -243,10 +244,9 @@ fun ThreadListScreen(
                         }
                     }
                     // The pin spotlight renders above the river,
-                    // whatever view is selected. Its state comes from
-                    // the getPinSlots read (the slot-state source of
-                    // record since the M2 host fixes); while that read
-                    // has not answered, the payload derivation fills in.
+                    // whatever view is selected. Its state comes only
+                    // from the getPinSlots read; while that read has
+                    // not answered, no strip renders.
                     val spotlightSlots: List<PinSlotUi> = servedPinSlots?.let { served ->
                         served.slots.mapNotNull { slot ->
                             when (slot) {
@@ -260,16 +260,7 @@ fun ThreadListScreen(
                                 ServedPinSlot.Vacant -> PinSlotUi.Vacant
                             }
                         }
-                    } ?: pinSlots(payload).map { slot ->
-                        when (slot) {
-                            is com.raaru.orekingdom.data.PinSlot.Filled -> PinSlotUi.Filled(
-                                threadId = slot.thread.id,
-                                title = slot.thread.title,
-                                endsLabel = shortDate(slot.thread.paidPinEndsAt)
-                            )
-                            com.raaru.orekingdom.data.PinSlot.Vacant -> PinSlotUi.Vacant
-                        }
-                    }
+                    } ?: emptyList()
                     PinSpotlight(
                         slots = spotlightSlots,
                         onOpenThread = { navController.navigate("thread/$it") },
@@ -288,12 +279,10 @@ fun ThreadListScreen(
                         is ForumViewModel.RiverView.Board ->
                             payload.threads.filter { it.categoryId == view.categoryId }
                     }
-                    val boardView = riverView as? ForumViewModel.RiverView.Board
-                    val onVipBoard = boardView != null && vip != null &&
-                        boardView.categoryId == vip.id
+                    val onVipBoard = selectedBoardCategory?.isVip == true
                     if (onVipBoard && visibleThreads.isEmpty()) {
                         VipLockedCard(
-                            boardName = vip!!.name,
+                            boardName = selectedBoardCategory!!.name,
                             signedIn = member != null,
                             onVerify = {
                                 vm.refreshWithProof(sender) { /* errors surface on retry */ }

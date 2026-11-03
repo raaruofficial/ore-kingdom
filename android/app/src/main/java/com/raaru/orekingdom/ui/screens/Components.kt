@@ -226,10 +226,8 @@ fun ThreadRow(thread: ForumThread, onClick: () -> Unit) {
 }
 
 /** One spotlight slot as the strip renders it — mapped by the River
- *  from the getPinSlots slot-state read (the source of record since
- *  the M2 host fixes), or, while that read has not answered, from
- *  the listForum payload derivation. Either way the strip renders
- *  only what a host read served. */
+ *  from the getPinSlots slot-state read. The strip renders only
+ *  what this host read serves. */
 sealed interface PinSlotUi {
     data class Filled(val threadId: Int, val title: String, val endsLabel: String) : PinSlotUi
     data object Vacant : PinSlotUi
@@ -239,8 +237,9 @@ sealed interface PinSlotUi {
  * The pin spotlight (pin spec): the live pin slots rotate through this
  * one position above the River with equal exposure; a vacant slot is
  * the house availability ad — spot, $250 / 12 hours, and the take-it
- * action, which opens the pin purchase (M3). The strip never renders
- * an empty frame: the slot list always carries the ruled capacity.
+ * action, which opens the pin purchase (M3). An empty slot list
+ * renders nothing; otherwise the served getPinSlots list carries the
+ * ruled capacity.
  */
 @Composable
 fun PinSpotlight(

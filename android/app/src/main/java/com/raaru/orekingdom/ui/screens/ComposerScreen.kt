@@ -30,10 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import com.raaru.orekingdom.data.VIP_BOARD_SLUG
 import com.raaru.orekingdom.data.ForumPayload
 import com.raaru.orekingdom.data.shortWallet
-import com.raaru.orekingdom.data.vipCategory
 import com.raaru.orekingdom.ui.ForumViewModel
 import com.raaru.orekingdom.util.AssetSpec
 import com.raaru.orekingdom.util.Assets
@@ -77,7 +75,6 @@ fun ComposerScreen(
         it.value as ForumPayload
     }
     val categories = payload?.categories ?: emptyList()
-    val vipId = payload?.let { vipCategory(it)?.id }
 
     var selectedCategoryId by remember(preselectCategoryId, categories) {
         mutableStateOf(
@@ -97,9 +94,7 @@ fun ComposerScreen(
     var error by remember { mutableStateOf<String?>(null) }
 
     val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId }
-    val isVipBoard = selectedCategory != null &&
-        (selectedCategory.isVip || selectedCategory.id == vipId ||
-            selectedCategory.slug == VIP_BOARD_SLUG)
+    val isVipBoard = selectedCategory?.isVip == true
     // The caller's holder state as last served (payload flag preferred;
     // the prestige read is the fallback). Null = unserved — the VM
     // then attempts session-free and lets the gate decide.
@@ -152,9 +147,7 @@ fun ComposerScreen(
                         selected = selectedCategoryId == category.id,
                         onClick = {
                             selectedCategoryId = category.id
-                            if (category.id == vipId || category.isVip ||
-                                category.slug == VIP_BOARD_SLUG
-                            ) {
+                            if (category.isVip) {
                                 commercial = false
                             }
                             invalidateQuote()
@@ -162,9 +155,7 @@ fun ComposerScreen(
                         enabled = !paying,
                         label = {
                             Text(
-                                (if (category.id == vipId || category.isVip ||
-                                    category.slug == VIP_BOARD_SLUG
-                                ) {
+                                (if (category.isVip) {
                                     "🔒 "
                                 } else {
                                     ""

@@ -165,8 +165,8 @@ class ForumViewModel(application: Application) : AndroidViewModel(application) {
     val isPrestigeHolder: StateFlow<Boolean?> = _isPrestigeHolder.asStateFlow()
 
     /** The spotlight's slot-state read (getPinSlots); null until the
-     *  first live answer — screens fall back to the payload
-     *  derivation while it is null or after a failed read. */
+     *  first live answer — the spotlight renders no strip until the
+     *  read answers. */
     private val _pinSlots = MutableStateFlow<PinSlots?>(null)
     val pinSlots: StateFlow<PinSlots?> = _pinSlots.asStateFlow()
 
@@ -224,10 +224,11 @@ class ForumViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * The River's base read: the full unpaginated payload, always
      * unfiltered — the views (All / Commercial / boards) filter it
-     * client-side, and the pin strip derives from the full set, so a
-     * board view never hides a live pin. A cached SIWS proof rides
-     * along so a verified prestige holder's payload includes the VIP
-     * board's threads (wrapper read release, M2_HOST_REPORT §4b).
+     * client-side. The pin strip reads separately through
+     * getPinSlots, so a board view never hides a live pin. A cached
+     * SIWS proof rides along so a verified prestige holder's payload
+     * includes the VIP board's threads (wrapper read release,
+     * M2_HOST_REPORT §4b).
      */
     fun loadForum() {
         viewModelScope.launch {
@@ -745,8 +746,8 @@ class ForumViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissParked(flow: ParkedFlow) = unparkFlow(flow.kind, flow.id)
 
     /** The spotlight's slot-state read (wrapper getPinSlots). A failed
-     *  read keeps the last served state (or null — the screens' payload
-     *  derivation covers the gap). */
+     *  read keeps the last served state; with no served state yet the
+     *  spotlight renders no strip. */
     fun loadPinSlots() {
         viewModelScope.launch {
             when (val result = hostApi.getPinSlots(sessionStore.wallet)) {

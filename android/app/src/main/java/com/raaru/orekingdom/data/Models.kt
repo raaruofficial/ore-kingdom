@@ -46,7 +46,7 @@ data class Category(
     val count: Int,
     /** The VIP-board marker the wrapper serves on category rows
      *  (forumReadTransform, M2 host fixes). Tolerant: absent on an
-     *  older host, where the slug fallback in [vipCategory] applies. */
+     *  older host, where it defaults to false. */
     val isVip: Boolean = false
 ) {
     companion object {
@@ -240,7 +240,7 @@ data class ThreadDetail(
 }
 
 // ---------------------------------------------------------------------------
-// M2 models — Inbox (R10), Catch-Up (R9), pin slots (pin spec).
+// M2 models — Inbox (R10) and Catch-Up (R9).
 // Shapes are the staging wrapper's / bundle's served payloads
 // (M2_HOST_REPORT + actions.ts listNotifications), parsed tolerantly.
 // ---------------------------------------------------------------------------
@@ -404,44 +404,6 @@ data class CatchUp(
         }
     }
 }
-
-/** The ruled pin-slot capacity (package: pin_slot_cap = 2). The two live
- *  pins rotate through the single spotlight above the River; a vacant
- *  slot renders as the house availability ad — never an empty frame. */
-const val PIN_SLOT_COUNT = 2
-
-sealed interface PinSlot {
-    data class Filled(val thread: ForumThread) : PinSlot
-    data object Vacant : PinSlot
-}
-
-/**
- * Derives the slot strip from the full (unfiltered) listForum
- * payload, whose threads carry isPaidPinned / paidPinEndsAt. Since
- * the M2 host fixes the host also serves the getPinSlots slot-state
- * read, which is the spotlight's source of record in M3; this
- * derivation remains as the fallback for when that read fails, and
- * like the read it uses only served data — active pins first by
- * soonest end, padded with vacant slots to the ruled capacity.
- */
-fun pinSlots(payload: ForumPayload): List<PinSlot> {
-    val active = payload.threads
-        .filter { it.isPaidPinned }
-        .sortedBy { it.paidPinEndsAt ?: "" }
-        .take(PIN_SLOT_COUNT)
-    val slots = mutableListOf<PinSlot>()
-    active.forEach { slots.add(PinSlot.Filled(it)) }
-    while (slots.size < PIN_SLOT_COUNT) slots.add(PinSlot.Vacant)
-    return slots
-}
-
-/** The VIP board is the category whose slug matches the host's
- *  OK_VIP_BOARD_SLUG (wrapper default "vip"). No such category = the
- *  host has no VIP surface and nothing renders locked. */
-const val VIP_BOARD_SLUG = "vip"
-
-fun vipCategory(payload: ForumPayload): Category? =
-    payload.categories.firstOrNull { it.slug == VIP_BOARD_SLUG }
 
 fun shortWallet(wallet: String?): String {
     if (wallet.isNullOrBlank()) return "—"
