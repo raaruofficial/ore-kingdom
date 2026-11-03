@@ -17,10 +17,7 @@ data class Member(
     val skrName: String,
     val reputation: Int,
     val tier: String,
-    val isFounder: Boolean,
-    val isFoundingMember: Boolean,
-    val foundingNumber: Int?,
-    val foundingTranche: String?
+    val isFoundingMember: Boolean
 ) {
     companion object {
         fun fromJson(o: JSONObject) = Member(
@@ -30,10 +27,7 @@ data class Member(
             skrName = o.optString("skrName"),
             reputation = o.optInt("reputation"),
             tier = o.optString("tier"),
-            isFounder = o.optBoolean("isFounder"),
-            isFoundingMember = o.optBoolean("isFoundingMember"),
-            foundingNumber = if (o.isNull("foundingNumber")) null else o.optInt("foundingNumber"),
-            foundingTranche = if (o.isNull("foundingTranche")) null else o.optString("foundingTranche")
+            isFoundingMember = o.optBoolean("isFoundingMember")
         )
     }
 }
@@ -68,7 +62,6 @@ data class ForumThread(
     val title: String,
     val body: String,
     val authorName: String,
-    val authorIsFounder: Boolean,
     val authorIsFoundingMember: Boolean,
     val isPinned: Boolean,
     val isPaidPinned: Boolean,
@@ -96,7 +89,6 @@ data class ForumThread(
             title = o.optString("title"),
             body = o.optString("body"),
             authorName = o.optString("authorName"),
-            authorIsFounder = o.optBoolean("authorIsFounder"),
             authorIsFoundingMember = o.optBoolean("authorIsFoundingMember"),
             isPinned = o.optBoolean("isPinned"),
             isPaidPinned = o.optBoolean("isPaidPinned"),
@@ -155,7 +147,6 @@ data class ThreadFull(
     val title: String,
     val body: String,
     val authorName: String,
-    val authorIsFounder: Boolean,
     val authorIsFoundingMember: Boolean,
     val canTip: Boolean,
     val tipCount: Int,
@@ -173,7 +164,6 @@ data class ThreadFull(
             title = o.optString("title"),
             body = o.optString("body"),
             authorName = o.optString("authorName"),
-            authorIsFounder = o.optBoolean("authorIsFounder"),
             authorIsFoundingMember = o.optBoolean("authorIsFoundingMember"),
             canTip = o.optBoolean("canTip"),
             tipCount = o.optInt("tipCount"),
@@ -193,7 +183,6 @@ data class Reply(
     val parentReplyId: Int?,
     val body: String,
     val authorName: String,
-    val authorIsFounder: Boolean,
     val authorIsFoundingMember: Boolean,
     val canTip: Boolean,
     val tipCount: Int,
@@ -207,7 +196,6 @@ data class Reply(
             parentReplyId = if (o.isNull("parentReplyId")) null else o.optInt("parentReplyId"),
             body = o.optString("body"),
             authorName = o.optString("authorName"),
-            authorIsFounder = o.optBoolean("authorIsFounder"),
             authorIsFoundingMember = o.optBoolean("authorIsFoundingMember"),
             canTip = o.optBoolean("canTip"),
             tipCount = o.optInt("tipCount"),

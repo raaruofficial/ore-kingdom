@@ -210,8 +210,7 @@ class ForumViewModel(application: Application) : AndroidViewModel(application) {
         if (wallet != null && skr != null) {
             _member.value = Member(
                 id = 0, wallet = wallet, displayName = skr, skrName = skr,
-                reputation = 0, tier = "", isFounder = false,
-                isFoundingMember = false, foundingNumber = null, foundingTranche = null
+                reputation = 0, tier = "", isFoundingMember = false
             )
         }
         loadForum()
@@ -961,8 +960,8 @@ class ForumViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Reply to a thread. The first attempt is session-free — the gate
-     * passes VIP-holder posts, founder-audience posts and every other
-     * session-free case by its own reads, and paying first would
+     * passes VIP-holder posts, prestige-based session-free posts and every
+     * other session-free case by its own reads, and paying first would
      * strand a session against them. Only the gate's own paid answer
      * ("start a payment session first") opens the paid path: a priced
      * reply session, paid once, dispatched through the pending loop.
