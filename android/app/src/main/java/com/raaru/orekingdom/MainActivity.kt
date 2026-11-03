@@ -66,8 +66,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         walletSender = ActivityResultSender(this)
         enableEdgeToEdge()
-        val recovered = intent?.getBooleanExtra(OreKingdomApp.EXTRA_RECOVERED, false) == true ||
-            (application as OreKingdomApp).consumeRecoveryMarker()
+        // Consume the recovery marker unconditionally — never
+        // short-circuited by the intent extra (M4 gate fix): with the
+        // extra present, the old || left the marker on disk and the
+        // recovery card showed a second time on the next cold launch.
+        // A recovery is shown exactly once.
+        val markerRecovered = (application as OreKingdomApp).consumeRecoveryMarker()
+        val recovered = markerRecovered ||
+            intent?.getBooleanExtra(OreKingdomApp.EXTRA_RECOVERED, false) == true
         setContent {
             OreKingdomTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
