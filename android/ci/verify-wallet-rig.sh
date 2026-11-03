@@ -500,6 +500,12 @@ if [ -n "${RIG_IME_APK:-}" ] && [ -f "${RIG_IME_APK:-}" ]; then
   adb shell ime enable com.tithe.rigime/.RigIme >/dev/null 2>&1 || true
   adb shell ime set com.tithe.rigime/.RigIme >/dev/null 2>&1 || true
   sleep 1
+  if ! adb shell settings get secure default_input_method 2>/dev/null | grep -q "rigime"; then
+    log "ime: first selection did not take — retrying enable+set"
+    adb shell ime enable com.tithe.rigime/.RigIme >/dev/null 2>&1 || true
+    adb shell ime set com.tithe.rigime/.RigIme >/dev/null 2>&1 || true
+    sleep 1
+  fi
   log "ime: default now $(adb shell settings get secure default_input_method 2>/dev/null)"
 else
   log "ime: no RIG_IME_APK provided — typing uses key injection (known-corrupt on this image)"
@@ -513,16 +519,17 @@ type_text() { # $1 = value; the target field must be focused
 # --- Ore Kingdom navigation / state helpers --------------------------------------
 signin_screen_state() { # $1 = dump file; echoes the SignIn screen's state
   if dump_ui "$1"; then
-    if grep -q "You're signed in as" "$1"; then echo "signedin"
+    if grep -q "SIGNED IN" "$1" && grep -q "$RIG_SKR_NAME" "$1"; then echo "signedin"
     elif grep -q "Waiting for wallet" "$1"; then echo "working"
     elif grep -q "Wallet connected:" "$1"; then echo "connected"
-    elif grep -q "Connect wallet & sign in" "$1" || grep -q "Read this first" "$1"; then echo "ready"
+    elif grep -q "Connect wallet & sign in" "$1" || grep -q "READ THIS FIRST" "$1"; then echo "ready"
     else echo "unknown"; fi
   else echo "nodump"; fi
 }
 
-signed_in_visible() { # $1 = dump file
-  grep -q "You're signed in as" "$1" 2>/dev/null
+signed_in_visible() { # $1 = dump file; Flagship 5 signed-in card:
+  # the SIGNED IN caps label beside the member's .skr name.
+  grep -q "SIGNED IN" "$1" 2>/dev/null && grep -q "$RIG_SKR_NAME" "$1" 2>/dev/null
 }
 
 dismiss_catchup() { # $1 = dump file (refreshed in place); the River's
@@ -539,7 +546,7 @@ goto_signin() { # lands on the SignIn screen from anywhere in the app
   launch_app
   local f="$TMPD/gs.xml"
   dump_ui "$f" || { log "goto_signin: FAILED — dump_ui produced no hierarchy (fg=$(fg_pkg))"; return 1; }
-  if grep -q "Read this first" "$f"; then return 0; fi
+  if grep -q "READ THIS FIRST" "$f"; then return 0; fi
   dismiss_catchup "$f"
   # The River's member chip always routes to the sign-in screen: its
   # text is "Sign in" signed-out and the member's .skr name signed-in.
@@ -552,18 +559,18 @@ goto_signin() { # lands on the SignIn screen from anywhere in the app
     return 1
   fi
   sleep 2
-  dump_ui "$f" && grep -q "Read this first" "$f"
+  dump_ui "$f" && grep -q "READ THIS FIRST" "$f"
 }
 
 sign_out() { # 0 if signed out at the end (incl. never signed in)
   goto_signin || return 1
   local f="$TMPD/so.xml"
   dump_ui "$f" || return 1
-  if grep -q "You're signed in as" "$f"; then
+  if grep -q "SIGNED IN" "$f"; then
     tap_text "$f" "Sign out" || { log "sign_out: no Sign out control on the signed-in screen"; return 1; }
     sleep 2
     dump_ui "$f" || return 1
-    if grep -q "You're signed in as" "$f"; then
+    if grep -q "SIGNED IN" "$f"; then
       log "sign_out: still signed in after tapping Sign out"
       return 1
     fi
@@ -755,7 +762,7 @@ profile_signed_in_ok() { # 0 if the sign-in screen shows the rig member
   goto_signin || return 1
   local f="$TMPD/psi.xml"
   dump_ui "$f" || return 1
-  grep -q "You're signed in as $RIG_SKR_NAME" "$f" && grep -q "Wallet $EXPECTED_TRUNC" "$f"
+  grep -q "SIGNED IN" "$f" && grep -q "$RIG_SKR_NAME" "$f" && grep -q "Wallet $EXPECTED_TRUNC" "$f"
 }
 
 # --- CR-3: KFC-008 abandonment, connect path, x3 reps -------------------------------
@@ -901,7 +908,7 @@ open_composer() { # 0 if the composer is up with Title/Body fields
   local f="$TMPD/comp.xml"
   dump_ui "$f" || return 1
   if grep -q 'text="Title"' "$f" && grep -q 'text="Body"' "$f"; then return 0; fi
-  if grep -q "Read this first" "$f"; then
+  if grep -q "READ THIS FIRST" "$f"; then
     # Starting on the sign-in screen (the CR-5 setup ends there):
     # BACK pops to the River.
     adb shell input keyevent 4 >/dev/null 2>&1 || true
@@ -921,6 +928,16 @@ fill_composer() { # $1 = title
   tap_text "$f" "Title" || return 1
   sleep 1
   type_text "$1"
+  # Self-check: the typed title must be readable in the field before
+  # anything downstream is graded on it (a dead IME must fail HERE,
+  # with the dump filed, not as a mysterious missing thread later).
+  dump_ui "$f" || return 1
+  if ! grep -q "$1" "$f"; then
+    log "fill_composer: title not in the field after typing — retrying the broadcast once"
+    type_text "$1"
+    dump_ui "$f" || return 1
+    grep -q "$1" "$f" || { cp "$f" "$OUT/hier-cr5-typefail.xml" || true; return 1; }
+  fi
   dump_ui "$f" || return 1
   tap_text "$f" "Body" || return 1
   sleep 1
@@ -959,7 +976,7 @@ cell_cr5() {
   # Signed-in member start (the composer is member-gated).
   goto_signin || { cr5="NOT-RUN(sign-in screen unreachable)"; return; }
   local f="$TMPD/cr5.xml"
-  if ! dump_ui "$f" || ! grep -q "You're signed in as" "$f"; then
+  if ! dump_ui "$f" || ! signed_in_visible "$f"; then
     tap_text "$f" "Connect wallet" || { cr5="NOT-RUN(no connect control for the setup sign-in)"; return; }
     local setup_approvals; setup_approvals="$(approval_loop "cr5-setup" 150)"
     log "cr5: setup sign-in approvals=$setup_approvals"
