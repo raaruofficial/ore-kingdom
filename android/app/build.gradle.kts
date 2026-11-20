@@ -59,6 +59,15 @@ android {
             )
             if (keystoreFile != null) {
                 signingConfig = signingConfigs.getByName("release")
+            } else if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
+                // B-4 (estate standard, cured for the M5 seal 2026-11-19):
+                // a release task without signing env fails closed instead
+                // of producing an unsigned APK silently.
+                throw GradleException(
+                    "Release signing requires KEYSTORE_FILE (plus " +
+                        "KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD). " +
+                        "Refusing to produce an unsigned release build."
+                )
             }
         }
     }
