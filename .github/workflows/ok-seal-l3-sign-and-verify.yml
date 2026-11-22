@@ -1,8 +1,8 @@
-# DRAFT — NOT IN ANY REPO. Prepared 2026-11-21 for the December batch
-# (see ../DECEMBER_BATCH_MANIFEST.md). Arm by copying into
-# .github/workflows/ of raaruofficial/ore-kingdom at fire time, after
-# FIRE_CHECKLIST.md is complete. Pin third-party actions by SHA at arm
-# time. Dispatch-only.
+# ARMED in this repo (a63bd6c; R2-E1 dispatch-source guard added
+# ade2734). Prepared 2026-11-21 for the December batch (manifest:
+# goals/ore-kingdom-dapp-store-submission/files/DECEMBER_BATCH_MANIFEST.md).
+# Fires under the owner's fire word, after FIRE_CHECKLIST.md is
+# complete. Third-party actions are pinned by SHA. Dispatch-only.
 #
 # L3 = THE SEAL. Ports burst legs ok-seal-build, ok-cold-run, ok-rig,
 # ok-rig-control. Jobs:
@@ -118,7 +118,12 @@ jobs:
         run: |
           APK=app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
-          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$APK" > ../signer-certs.txt
+          # Robust apksigner lookup (same pattern as the cold-run job
+          # below): the tree sets no buildToolsVersion (AGP 8.7.3
+          # defaults to 35.0.0), so a hardcoded 34.0.0 path is a hostage
+          # to the runner image. Comb (a) 2026-11-22.
+          APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --print-certs "$APK" > ../signer-certs.txt
           grep -q "$SIGNER_CERT_SHA256" ../signer-certs.txt \
             || { echo "SIGNER ASSERTION FAIL: signer cert does not match the custody anchor"; cat ../signer-certs.txt; exit 1; }
           sha256sum "$APK" | awk '{print $1}' > ../apk-sha256.txt
