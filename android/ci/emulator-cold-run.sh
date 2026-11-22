@@ -195,6 +195,20 @@ fi
 # Text-node census: a blank activity has ~zero text nodes.
 TEXT_NODES="$(grep -o 'text="[^"]\+"' "$EVIDENCE/window_dump.xml" | grep -vc 'text=""' || true)"
 echo "text_nodes=$TEXT_NODES" > "$EVIDENCE/checks.txt"
+
+# R2-m13 (2026-11-22): the bundle must carry the identity of the
+# binary it ran — APK sha256 + signer read-back INSIDE checks.txt,
+# not only in a sibling bundle a reviewer must trust grouping for.
+APK_SHA256="$(sha256sum "$APK" 2>/dev/null | awk '{print $1}')"
+echo "apk_sha256=${APK_SHA256:-unavailable}" >> "$EVIDENCE/checks.txt"
+SIGNER_SHA256=""
+if [ -n "${ANDROID_HOME:-}" ]; then
+  APKSIGNER_BIN="$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
+  if [ -n "$APKSIGNER_BIN" ]; then
+    SIGNER_SHA256="$("$APKSIGNER_BIN" verify --print-certs "$APK" 2>/dev/null | sed -n 's/.*certificate SHA-256 digest: //p' | head -1 | tr -d ' :')"
+  fi
+fi
+echo "signer_cert_sha256=${SIGNER_SHA256:-unavailable}" >> "$EVIDENCE/checks.txt"
 [ "${TEXT_NODES:-0}" -ge 5 ] || fail "hierarchy nearly blank: only $TEXT_NODES text nodes"
 
 # --- Common assertions ---------------------------------------------------------

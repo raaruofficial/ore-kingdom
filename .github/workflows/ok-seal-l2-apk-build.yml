@@ -36,6 +36,11 @@ jobs:
       run:
         working-directory: android
     steps:
+      - name: Dispatch-source guard (R2-E1) — only the default branch's copy of this workflow may run
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main" \
+            || { echo "R2-E1 GUARD FAIL: dispatched from '$GITHUB_REF', not refs/heads/main. The pin assertion binds HEAD to a pin literal carried in the dispatched workflow file itself, so only the default branch's copy — whose pin is the pin of record — may certify a run; a foreign ref's copy pinning its own HEAD is refused here, before checkout."; exit 1; }
+          echo "dispatch-source verified: $GITHUB_REF (pin of record = this branch's copy)"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}

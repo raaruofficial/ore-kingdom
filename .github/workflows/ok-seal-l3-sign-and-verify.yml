@@ -52,6 +52,11 @@ jobs:
     runs-on: ubuntu-latest # GitHub-hosted only — signing leg
     timeout-minutes: 60
     steps:
+      - name: Dispatch-source guard (R2-E1) — only the default branch's copy of this workflow may run
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main" \
+            || { echo "R2-E1 GUARD FAIL: dispatched from '$GITHUB_REF', not refs/heads/main. The pin assertion binds HEAD to a pin literal carried in the dispatched workflow file itself, so only the default branch's copy — whose pin is the pin of record — may certify a run; a foreign ref's copy pinning its own HEAD is refused here, before checkout."; exit 1; }
+          echo "dispatch-source verified: $GITHUB_REF (pin of record = this branch's copy)"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
@@ -147,6 +152,11 @@ jobs:
     runs-on: ubuntu-latest # GitHub-hosted only
     timeout-minutes: 150
     steps:
+      - name: Dispatch-source guard (R2-E1) — only the default branch's copy of this workflow may run
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main" \
+            || { echo "R2-E1 GUARD FAIL: dispatched from '$GITHUB_REF', not refs/heads/main. The pin assertion binds HEAD to a pin literal carried in the dispatched workflow file itself, so only the default branch's copy — whose pin is the pin of record — may certify a run; a foreign ref's copy pinning its own HEAD is refused here, before checkout."; exit 1; }
+          echo "dispatch-source verified: $GITHUB_REF (pin of record = this branch's copy)"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
@@ -175,6 +185,24 @@ jobs:
         run: |
           test "$(sha256sum sealed/ore-kingdom-release.apk | awk '{print $1}')" = "$(cat sealed/apk-sha256.txt)" \
             || { echo "Downloaded APK hash != sealed hash — refusing to cold-run a different binary"; exit 1; }
+
+      - name: Capture sealed APK identity into every cold-run evidence bundle (R2-m13)
+        run: |
+          # Each cold-run bundle must tie itself to the sealed binary:
+          # sha256 + full signer read-back filed INSIDE each mode's
+          # evidence dir (and mirrored into checks.txt by
+          # android/ci/emulator-cold-run.sh).
+          mkdir -p evidence/online evidence/nowallet evidence/offline
+          SHA="$(sha256sum sealed/ore-kingdom-release.apk | awk '{print $1}')"
+          APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --print-certs sealed/ore-kingdom-release.apk > signer-certs-cold.txt 2>&1
+          grep -q "$SIGNER_CERT_SHA256" signer-certs-cold.txt \
+            || { echo "SIGNER ASSERTION FAIL (cold-run identity): signer does not match the custody anchor"; cat signer-certs-cold.txt; exit 1; }
+          for d in online nowallet offline; do
+            { echo "apk_sha256=$SHA";
+              echo "apk_file=ore-kingdom-release.apk";
+              cat signer-certs-cold.txt; } > "evidence/$d/apk-identity.txt"
+          done
 
       - name: Enable KVM
         run: |
@@ -244,6 +272,11 @@ jobs:
     runs-on: ubuntu-latest # GitHub-hosted only
     timeout-minutes: 180
     steps:
+      - name: Dispatch-source guard (R2-E1) — only the default branch's copy of this workflow may run
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main" \
+            || { echo "R2-E1 GUARD FAIL: dispatched from '$GITHUB_REF', not refs/heads/main. The pin assertion binds HEAD to a pin literal carried in the dispatched workflow file itself, so only the default branch's copy — whose pin is the pin of record — may certify a run; a foreign ref's copy pinning its own HEAD is refused here, before checkout."; exit 1; }
+          echo "dispatch-source verified: $GITHUB_REF (pin of record = this branch's copy)"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
@@ -261,6 +294,11 @@ jobs:
     runs-on: ubuntu-latest # GitHub-hosted only
     timeout-minutes: 120
     steps:
+      - name: Dispatch-source guard (R2-E1) — only the default branch's copy of this workflow may run
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main" \
+            || { echo "R2-E1 GUARD FAIL: dispatched from '$GITHUB_REF', not refs/heads/main. The pin assertion binds HEAD to a pin literal carried in the dispatched workflow file itself, so only the default branch's copy — whose pin is the pin of record — may certify a run; a foreign ref's copy pinning its own HEAD is refused here, before checkout."; exit 1; }
+          echo "dispatch-source verified: $GITHUB_REF (pin of record = this branch's copy)"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
