@@ -21,6 +21,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SEAL_PIN: 1a6207c3d3c169652b4e09f77489ea60580e4b6d
+
 jobs:
   source-gate:
     name: Source-truth gate + unit tests (pin)
@@ -30,6 +33,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
+
+      - name: Pin check (B-M2) — HEAD must equal the seal pin
+        run: |
+          test "$(git rev-parse HEAD)" = "$SEAL_PIN" \
+            || { echo "Ref is not the seal pin $SEAL_PIN — refusing to gate"; exit 1; }
+          echo "pin-verified: HEAD=$(git rev-parse HEAD)"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
@@ -43,7 +52,7 @@ jobs:
 
       - name: Source-truth gate (ported verbatim from ok-gate-verify)
         run: |
-          { echo 'ORE KINGDOM SEAL SOURCE GATE — pin ${{ inputs.ref }}';
+          { echo "ORE KINGDOM SEAL SOURCE GATE — pin $(git rev-parse HEAD) (asserted == seal pin $SEAL_PIN)";
           grep -q 'versionName = "0.1.4"' android/app/build.gradle.kts && echo 'PASS versionName 0.1.4' || echo 'FAIL versionName';
           grep -q 'versionCode = 5' android/app/build.gradle.kts && echo 'PASS versionCode 5' || echo 'FAIL versionCode';
           grep -q 'GradleException' android/app/build.gradle.kts && echo 'PASS B-4 release fail-closed throw present' || echo 'FAIL B-4 throw';

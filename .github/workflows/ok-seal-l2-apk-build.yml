@@ -24,6 +24,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SEAL_PIN: 1a6207c3d3c169652b4e09f77489ea60580e4b6d
+
 jobs:
   build:
     name: Debug build + B-4 fail-closed proof
@@ -36,6 +39,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
+
+      - name: Pin check (B-M2) — HEAD must equal the seal pin
+        run: |
+          test "$(git rev-parse HEAD)" = "$SEAL_PIN" \
+            || { echo "Ref is not the seal pin $SEAL_PIN — refusing to build"; exit 1; }
+          echo "pin-verified: HEAD=$(git rev-parse HEAD)"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
