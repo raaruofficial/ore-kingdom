@@ -25,7 +25,17 @@ inputs:
   expect:
     required: false
     default: pass
-    description: pass = driver must pass; fail = faulted-control run, driver MUST fail CR-3
+    description: pass = driver must pass; fail = faulted-control run, graded by control-verdict.py (hang-shaped failures in CR-3/CR-4/CR-5 only)
+  mock-variant:
+    required: false
+    default: normal
+    description: >-
+      normal = stock pinned mock; silent = mock + rig-mock-silent.patch
+      (scenario close suppressed — an abandoned request delivers
+      NOTHING). Any suite containing an abandonment cell (kfc008, all,
+      ctl) must use silent; the stock mock tears its session down on
+      the driver's HOME gesture and cannot discriminate the KFC-008
+      hang (R2-M4).
 
 runs:
   using: composite
@@ -45,11 +55,26 @@ runs:
         sudo apt-get install -y -qq libpulse0 libgl1 libegl1 libnss3 libxcb-cursor0 > /dev/null
         ldconfig -p | grep -c libpulse || true
 
-    - name: Set up JDK 17
+    - name: Set up JDK 17 (pinned fixed build)
       uses: actions/setup-java@v4
       with:
         distribution: temurin
-        java-version: '17'
+        # Pinned to the fixed build for CVE-2026-114938. The floating
+        # '17' resolved to the AFFECTED 17.0.21+9 on the night of the
+        # 2026-11-21 seal; that artifact's provenance is tainted.
+        java-version: '17.0.21.1+2'
+
+    - name: Verify the pinned JDK is the one in use
+      shell: bash
+      run: |
+        java -version 2>&1 | tee "$RUNNER_TEMP/jdk-version.txt"
+        if ! grep -q '17\.0\.21\.1+2\|17\.0\.21\.1_2\|Temurin-17\.0\.21\.1+2' "$RUNNER_TEMP/jdk-version.txt"; then
+          echo "JDK PIN FAIL: expected Temurin 17.0.21.1+2 (fixed build for CVE-2026-114938)"
+          echo "If this exact build is unavailable on the runner image, the interim"
+          echo "mitigation is to build with -XX:-UseBASE64Intrinsics in JAVA_TOOL_OPTIONS"
+          echo "and record the substitution in the seal record — never float to '17' silently."
+          exit 1
+        fi
 
     - name: Set up Gradle
       uses: gradle/actions/setup-gradle@v4
@@ -86,6 +111,12 @@ runs:
         git checkout "$MOCK_COMMIT"
         git rev-parse HEAD
         git apply "$GITHUB_WORKSPACE/android/ci/rig-mock-rpc.patch"
+        if [ "${{ inputs.mock-variant }}" = "silent" ]; then
+          git apply "$GITHUB_WORKSPACE/android/ci/rig-mock-silent.patch"
+          echo "mock variant: SILENT (scenario close suppressed — abandonment delivers nothing)"
+        else
+          echo "mock variant: normal (stock mock)"
+        fi
         git diff --stat
 
     - name: Gradle cache (mock wallet)
@@ -158,6 +189,7 @@ runs:
       uses: reactivecircus/android-emulator-runner@v2
       env:
         SUITE: ${{ inputs.suite }}
+        MOCK_VARIANT: ${{ inputs.mock-variant }}
         BUILD_SHA: ${{ github.sha }}
         OK_APK: ${{ github.workspace }}/ok-debug.apk
         MOCK_APK: ${{ github.workspace }}/mock-debug.apk
@@ -180,11 +212,42 @@ runs:
         emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
         script: bash android/ci/run-rig.sh ${{ inputs.suite }} ${{ inputs.api-level }} ${{ inputs.expect }}
 
+    # Artifact names encode the verdict the run ACTUALLY produced
+    # (rig-outcome.txt, written by run-rig.sh from the verdict file /
+    # the control gate), never the caller's expected result (R2-M7:
+    # the old rule named a bundle "-pass" whose verdict was all
+    # NOT-RUN/FAIL, and "-fail" the night's only PASS). The same step
+    # enriches the evidence with the binaries' hashes and the mock
+    # variant, so a control verdict's claim about which binary
+    # produced it rests on the artifact itself, not job-log order
+    # (R2-m9).
+    - name: Record run outcome + binary identity in the evidence
+      id: rig-outcome
+      if: always()
+      shell: bash
+      run: |
+        EV="wallet-rig-evidence-${{ inputs.suite }}-api${{ inputs.api-level }}"
+        OUTCOME="no-verdict"
+        if [ -f "$EV/rig-outcome.txt" ]; then
+          OUTCOME="$(sed -n 's/^outcome=//p' "$EV/rig-outcome.txt" | head -n 1)"
+          case "$OUTCOME" in pass|fail|no-verdict) ;; *) OUTCOME="no-verdict" ;; esac
+        fi
+        echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+        {
+          echo "mock_variant=${{ inputs.mock-variant }}"
+          echo "build_sha=${{ github.sha }}"
+          [ -f "$GITHUB_WORKSPACE/mock-debug.apk" ] && echo "mock_apk_sha256=$(sha256sum "$GITHUB_WORKSPACE/mock-debug.apk" | awk '{print $1}')"
+          [ -f "$GITHUB_WORKSPACE/ok-debug.apk" ] && echo "app_apk_sha256=$(sha256sum "$GITHUB_WORKSPACE/ok-debug.apk" | awk '{print $1}')"
+          echo "control_neuter_patch_sha256=$(sha256sum android/ci/control-neuter.patch | awk '{print $1}')"
+          echo "rig_mock_silent_patch_sha256=$(sha256sum android/ci/rig-mock-silent.patch | awk '{print $1}')"
+        } | tee "$EV/binary-identity.txt" || true
+        echo "rig artifact outcome: $OUTCOME"
+
     - name: Upload wallet-rig evidence
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ok-wallet-rig-${{ inputs.suite }}-api${{ inputs.api-level }}-${{ inputs.expect }}
+        name: ok-wallet-rig-${{ inputs.suite }}-api${{ inputs.api-level }}-${{ steps.rig-outcome.outputs.outcome }}
         path: wallet-rig-evidence-${{ inputs.suite }}-api${{ inputs.api-level }}
         if-no-files-found: warn
 
@@ -192,7 +255,7 @@ runs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ok-wallet-rig-hostlogs-${{ inputs.suite }}-api${{ inputs.api-level }}-${{ inputs.expect }}
+        name: ok-wallet-rig-hostlogs-${{ inputs.suite }}-api${{ inputs.api-level }}-${{ steps.rig-outcome.outputs.outcome }}
         path: |
           ${{ runner.temp }}/host.log
           ${{ runner.temp }}/stub.log

@@ -26,6 +26,7 @@ jobs:
         with:
           api-level: 35
           suite: all
+          mock-variant: silent
           avd-name: ok-rig-35
           mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
 
@@ -43,6 +44,7 @@ jobs:
         with:
           api-level: 35
           suite: ctl
+          mock-variant: silent
           avd-name: ok-rig-control-35
           mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
           expect: fail

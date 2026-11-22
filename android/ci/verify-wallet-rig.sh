@@ -33,6 +33,30 @@
 #            unconsumed; the in-process retry posts the thread and
 #            consumes its session exactly once.
 #   all    = core + kfc008.
+#   ctl    = the KFC-008 discrimination control: CR-3 x3 reps + CR-4 +
+#            CR-5, the SAME cells at the SAME rep counts as the pass
+#            side, run against the cure-neutered build. The control
+#            verdict is NOT read from this driver's exit code — it is
+#            graded by android/ci/control-verdict.py, which accepts
+#            only genuine hang-shaped failures (R2-M5).
+#
+# MOCK VARIANT (env MOCK_VARIANT, default normal):
+#   normal = the stock pinned mock. Its LocalScenario session is torn
+#            down ~2 s after the driver's HOME gesture, which hands the
+#            dapp a definitive answer — so an "abandonment" against it
+#            is a wallet-side session abort, not an abandonment, and
+#            CR-3/CR-4/CR-5 cannot discriminate the KFC-008 hang
+#            (defect hunt round 2, R2-M4).
+#   silent = the mock built with android/ci/rig-mock-silent.patch:
+#            scenario close is suppressed on every lifecycle path, so
+#            an abandoned request delivers NOTHING — no result, no
+#            error, no termination. Only a build whose cure resolves
+#            the request in-process can pass an abandonment cell
+#            against it; a cure-neutered build hangs past the 30 s
+#            backstop and fails in the hang shape. Any suite that
+#            contains an abandonment cell (kfc008, all, ctl) MUST run
+#            silent; the workflows wire that, and control-verdict.py
+#            refuses to certify a control run recorded as normal.
 #
 # RESOLUTION BAR (registry KFC-008 + VR-12 precedent): an abandoned
 # request must resolve to session truth within a 30 s poll window
@@ -53,6 +77,7 @@ MOCK="com.solana.mwallet"
 MOCK_ACT="com.solana.mwallet/.MainActivity"
 OUT="${RIG_OUT:-wallet-rig-evidence}"
 SUITE="${SUITE:-all}"
+MOCK_VARIANT="${MOCK_VARIANT:-normal}"
 APP_APK="${OK_APK:-}"
 MOCK_APK="${MOCK_APK:-}"
 EXPECTED_PUBKEY="${EXPECTED_PUBKEY:-}"
@@ -661,6 +686,17 @@ abandon_and_return() { # $1 = tag
   local tag="$1"
   adb shell input keyevent 3 >/dev/null 2>&1 || true  # HOME — abandon
   sleep 3
+  if [ "$MOCK_VARIANT" = "silent" ]; then
+    # Silent-wallet abandonment: do NOT walk recents and do NOT
+    # re-foreground the wallet task. The fault shape is a wallet that
+    # keeps its session alive in the background and delivers nothing;
+    # re-foregrounding the wallet would recreate its activity (and, on
+    # the stock mock, is part of what destroyed the session). Go
+    # straight back to the dapp and let the cell's poll clock run.
+    log "$tag: silent-wallet abandonment — returning straight to the app (wallet left backgrounded, session undelivered)"
+    launch_app
+    return
+  fi
   adb shell input keyevent 187 >/dev/null 2>&1 || true  # recents
   sleep 3
   dump_ui "$OUT/hier-$tag-recents.xml" || true
@@ -1122,7 +1158,7 @@ cell_cr5() {
 case "$SUITE" in
   core)   cell_cr1; cell_cr2 ;;
   kfc008) cell_cr3; cell_cr4; cell_cr5 ;;
-  ctl)    CR3_REPS=1; cell_cr3 ;;
+  ctl)    CR3_REPS=3; cell_cr3; cell_cr4; cell_cr5 ;;
   all)    cell_cr1; cell_cr2; cell_cr3; cell_cr4; cell_cr5 ;;
   *) log "unknown SUITE=$SUITE"; exit 2 ;;
 esac
@@ -1135,6 +1171,7 @@ log "totals: app_fatal=$fatal_app_total mock_fatal=$fatal_mock_total illegal_sta
 
 {
   echo "suite=$SUITE"
+  echo "mock_variant=$MOCK_VARIANT"
   echo "lock_pin=$lock_pin"
   echo "lock_fingerprint=$lock_fp"
   echo "authenticate=$auth_note"
@@ -1161,7 +1198,7 @@ done
 case "$SUITE" in
   core)   required="$cr1 $cr2" ;;
   kfc008) required="$cr3 $cr4 $cr5" ;;
-  ctl)    required="$cr3" ;;
+  ctl)    required="$cr3 $cr4 $cr5" ;;
   all)    required="$cr1 $cr2 $cr3 $cr4 $cr5" ;;
   *)      required="" ;;
 esac

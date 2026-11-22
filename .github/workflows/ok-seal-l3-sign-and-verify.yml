@@ -10,8 +10,10 @@
 #   cold-run     M4 battery (online/nowallet/offline) on the SEALED APK
 #   rig          owed dispatch #1 — suite all (CR-5 re-attempt)
 #   rig-control  owed dispatch #2 — KFC-008 discrimination control:
-#                the cure-neutered build MUST fail CR-3 in the
-#                predicted hang shape, or the rig cannot detect it
+#                the cure-neutered build, on the SILENT wallet, MUST
+#                fail CR-3 (x3), CR-4 and CR-5 in the predicted hang
+#                shape (graded by android/ci/control-verdict.py), or
+#                the rig cannot detect the fault
 #
 # CUSTODY PATTERN (non-negotiable):
 #   - GitHub-hosted runners ONLY (ubuntu-latest). Never self-hosted,
@@ -62,10 +64,22 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
-          java-version: '17'
+          # Pinned to the FIXED build for CVE-2026-114938 (rig repair
+          # prep 2026-11-21, item e). The floating '17' resolved to
+          # the AFFECTED 17.0.21+9 for the 2026-11-21 seal; that
+          # artifact (sha256 73640d11...) is provenance-tainted and
+          # must be superseded, never submitted. If this exact build
+          # is unavailable on the runner image, the interim mitigation
+          # is -XX:-UseBASE64Intrinsics (JAVA_TOOL_OPTIONS on the
+          # Gradle step) with the substitution recorded in the seal
+          # record -- never float back to '17' silently.
+          java-version: '17.0.21.1+2'
 
       - name: JDK evidence (feeds FIRE_CHECKLIST §C — CVE patch check)
-        run: java -version 2>&1 | tee jdk-version.txt
+        run: |
+          java -version 2>&1 | tee jdk-version.txt
+          grep -q '17\.0\.21\.1' jdk-version.txt \
+            || { echo "JDK PIN FAIL: build is not Temurin 17.0.21.1+2 — refusing to seal under an unpinned/affected JDK"; exit 1; }
 
       - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
         with:
@@ -140,7 +154,16 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
-          java-version: '17'
+          # Pinned to the FIXED build for CVE-2026-114938 (rig repair
+          # prep 2026-11-21, item e). The floating '17' resolved to
+          # the AFFECTED 17.0.21+9 for the 2026-11-21 seal; that
+          # artifact (sha256 73640d11...) is provenance-tainted and
+          # must be superseded, never submitted. If this exact build
+          # is unavailable on the runner image, the interim mitigation
+          # is -XX:-UseBASE64Intrinsics (JAVA_TOOL_OPTIONS on the
+          # Gradle step) with the substitution recorded in the seal
+          # record -- never float back to '17' silently.
+          java-version: '17.0.21.1+2'
 
       - name: Download sealed APK
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -228,11 +251,12 @@ jobs:
         with:
           api-level: 35
           suite: all
+          mock-variant: silent
           avd-name: ok-rig-35
           mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
 
   rig-control:
-    name: Wallet rig control — neutered cure MUST fail CR-3 (owed dispatch #2)
+    name: Wallet rig control — neutered cure MUST hang-fail CR-3/CR-4/CR-5 (owed dispatch #2)
     needs: seal-build
     runs-on: ubuntu-latest # GitHub-hosted only
     timeout-minutes: 120
@@ -246,6 +270,7 @@ jobs:
         with:
           api-level: 35
           suite: ctl
+          mock-variant: silent
           avd-name: ok-rig-control-35
           mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
           expect: fail

@@ -1,0 +1,54 @@
+diff --git a/app/src/main/java/com/solana/mwallet/MobileWalletAdapterActivity.kt b/app/src/main/java/com/solana/mwallet/MobileWalletAdapterActivity.kt
+index acdcd3d..2649566 100644
+--- a/app/src/main/java/com/solana/mwallet/MobileWalletAdapterActivity.kt
++++ b/app/src/main/java/com/solana/mwallet/MobileWalletAdapterActivity.kt
+@@ -42,7 +42,11 @@ class MobileWalletAdapterActivity : AppCompatActivity() {
+                                 Exception(error?.let { "Authentication error: $it" } ?: "Authentication failed"))
+                         }
+                     } else if (request is MobileWalletAdapterServiceRequest.SessionTerminated) {
+-                        finish()
++                        // RIG-SILENT: defensive only -- with the scenario
++                        // close suppressed this event should never fire.
++                        // If it ever does, staying alive keeps the sheet
++                        // reachable instead of compounding the teardown.
++                        Log.w(TAG, "RIG-SILENT: SessionTerminated ignored (silent-wallet variant)")
+                     } else if (request is MobileWalletAdapterServiceRequest.LowPowerNoConnection) {
+                         // should use dialog fragment, etc. but this is a quick demo
+                         AlertDialog.Builder(this@MobileWalletAdapterActivity)
+diff --git a/app/src/main/java/com/solana/mwallet/MobileWalletAdapterViewModel.kt b/app/src/main/java/com/solana/mwallet/MobileWalletAdapterViewModel.kt
+index 0eb3158..ee64860 100644
+--- a/app/src/main/java/com/solana/mwallet/MobileWalletAdapterViewModel.kt
++++ b/app/src/main/java/com/solana/mwallet/MobileWalletAdapterViewModel.kt
+@@ -88,8 +88,17 @@ class MobileWalletAdapterViewModel(application: Application) : AndroidViewModel(
+     }
+ 
+     override fun onCleared() {
+-        scenario?.close()
+-        scenario = null
++        // RIG-SILENT (Ore Kingdom wallet rig, silent-wallet control variant):
++        // test equipment only. A real abandonment delivers NOTHING: the
++        // wallet session stays alive in the background and no result, error,
++        // or termination ever reaches the dapp. The stock mock instead
++        // closes its LocalScenario here when its activity is destroyed
++        // (e.g. by the rig driver's HOME gesture), which terminates the
++        // WebSocket session and hands the dapp a definitive answer --
++        // the exact opposite of abandonment (defect hunt R2-M4). So in
++        // this variant the scenario is deliberately leaked: do not close
++        // it, do not drop the reference, do not emit SessionTerminated.
++        Log.w(TAG, "RIG-SILENT: onCleared -- scenario close SUPPRESSED (silent-wallet variant)")
+     }
+ 
+     fun authorizeDapp(
+@@ -468,7 +477,11 @@ class MobileWalletAdapterViewModel(application: Application) : AndroidViewModel(
+         override fun onScenarioServingClients() = Unit
+         override fun onScenarioServingComplete() {
+             viewModelScope.launch(Dispatchers.Main) {
+-                scenario?.close()
++                // RIG-SILENT: see onCleared(). Serving-complete must not
++                // tear the session down either; only an explicit user
++                // action on a sheet (approve/decline) may ever produce
++                // a result in this variant.
++                Log.w(TAG, "RIG-SILENT: onScenarioServingComplete -- scenario close SUPPRESSED (silent-wallet variant)")
+                 cancelAndReplaceRequest(MobileWalletAdapterServiceRequest.None)
+             }
+         }
