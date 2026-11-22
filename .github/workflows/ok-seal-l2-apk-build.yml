@@ -1,0 +1,79 @@
+# DRAFT — NOT IN ANY REPO. Prepared 2026-11-21 for the December batch
+# (see ../DECEMBER_BATCH_MANIFEST.md). Arm by copying into
+# .github/workflows/ of raaruofficial/ore-kingdom at fire time, after
+# FIRE_CHECKLIST.md is complete. Pin third-party actions by SHA at arm
+# time. Dispatch-only.
+#
+# L2 = APK build proof with NO signing material anywhere in the job:
+#   1. assembleDebug packages the full tree (mirrors android-native.yml).
+#   2. assembleRelease WITHOUT signing env must FAIL with the B-4
+#      GradleException — this re-proves the fail-closed guard on the
+#      venue. If it ever succeeds, the guard is gone and the seal is
+#      NO-GO. This workflow references zero secrets by design.
+
+name: Ore Kingdom seal — L2 APK build (unsigned)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: commit to build (seal pin default)
+        type: string
+        default: 1a6207c3d3c169652b4e09f77489ea60580e4b6d
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Debug build + B-4 fail-closed proof
+    runs-on: ubuntu-latest # GitHub-hosted only
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: SDK check (runner image ships the Android SDK)
+        run: ls "$ANDROID_HOME/platforms" && ls "$ANDROID_HOME/build-tools"
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Assemble debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: B-4 proof — release without signing env must fail closed
+        run: |
+          set +e
+          gradle :app:assembleRelease --stacktrace > ../b4-probe.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "B-4 FAIL: assembleRelease succeeded without signing env — the fail-closed guard is missing"
+            exit 1
+          fi
+          grep -q "Release signing requires KEYSTORE_FILE" ../b4-probe.log \
+            && echo "B-4 PASS: release refused unsigned, as designed" \
+            || { echo "B-4 FAIL: release failed, but not with the B-4 guard message"; tail -50 ../b4-probe.log; exit 1; }
+          test ! -f app/build/outputs/apk/release/app-release.apk \
+            || { echo "B-4 FAIL: an unsigned release APK exists"; exit 1; }
+
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ok-seal-l2-evidence
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            b4-probe.log
+          if-no-files-found: warn

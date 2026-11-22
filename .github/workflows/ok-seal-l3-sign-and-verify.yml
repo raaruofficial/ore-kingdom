@@ -1,0 +1,251 @@
+# DRAFT — NOT IN ANY REPO. Prepared 2026-11-21 for the December batch
+# (see ../DECEMBER_BATCH_MANIFEST.md). Arm by copying into
+# .github/workflows/ of raaruofficial/ore-kingdom at fire time, after
+# FIRE_CHECKLIST.md is complete. Pin third-party actions by SHA at arm
+# time. Dispatch-only.
+#
+# L3 = THE SEAL. Ports burst legs ok-seal-build, ok-cold-run, ok-rig,
+# ok-rig-control. Jobs:
+#   seal-build   signed release APK under the custody pattern below
+#   cold-run     M4 battery (online/nowallet/offline) on the SEALED APK
+#   rig          owed dispatch #1 — suite all (CR-5 re-attempt)
+#   rig-control  owed dispatch #2 — KFC-008 discrimination control:
+#                the cure-neutered build MUST fail CR-3 in the
+#                predicted hang shape, or the rig cannot detect it
+#
+# CUSTODY PATTERN (non-negotiable):
+#   - GitHub-hosted runners ONLY (ubuntu-latest). Never self-hosted,
+#     never third-party runner labels. Signing secrets are NEVER
+#     stored in Forgejo/the forge in any form.
+#   - The keystore exists in this job only as the repo secret
+#     KEYSTORE_BASE64 (name only — no keystore or password value ever
+#     appears in this file). It is decoded into the runner temp dir,
+#     sha256-gated against the custody anchor BEFORE Gradle runs,
+#     and wiped in an always() step so it dies even on failure.
+#   - The build additionally asserts the signer in-job via apksigner;
+#     a wrongly signed APK cannot be sealed by accident. (The tree's
+#     B-4 guard independently refuses unsigned release builds.)
+
+name: Ore Kingdom seal — L3 sign + verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: commit to seal (seal pin default)
+        type: string
+        default: 1a6207c3d3c169652b4e09f77489ea60580e4b6d
+
+permissions:
+  contents: read
+
+env:
+  SEAL_PIN: 1a6207c3d3c169652b4e09f77489ea60580e4b6d
+  KEYSTORE_SHA256: ba97c726cec8785d2cb47d2b97ba1450d5cfb165d91bb0f8703404cc91585c81
+  SIGNER_CERT_SHA256: 7961f5a23bf07e2a27bff67d19354f104e56f91b9f6bfa9cd06cabedb2d7f0cc
+
+jobs:
+  seal-build:
+    name: Signed release build + signer assertion
+    runs-on: ubuntu-latest # GitHub-hosted only — signing leg
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Pin check
+        run: |
+          test "$(git rev-parse HEAD)" = "$SEAL_PIN" \
+            || { echo "Ref is not the seal pin $SEAL_PIN — refusing to seal"; exit 1; }
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: JDK evidence (feeds FIRE_CHECKLIST §C — CVE patch check)
+        run: java -version 2>&1 | tee jdk-version.txt
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Stage keystore (hash gate before any use)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          umask 077
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/ore-kingdom-release.jks"
+          chmod 600 "$RUNNER_TEMP/ore-kingdom-release.jks"
+          actual="$(sha256sum "$RUNNER_TEMP/ore-kingdom-release.jks" | awk '{print $1}')"
+          if [ "$actual" != "$KEYSTORE_SHA256" ]; then
+            echo "HASH GATE FAIL: staged keystore sha256 $actual != custody anchor — aborting before build"
+            exit 1
+          fi
+          echo "HASH GATE PASS: keystore matches custody anchor"
+
+      - name: Assemble signed release
+        working-directory: android
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/ore-kingdom-release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Signer assertion + APK hash (the seal read-backs)
+        working-directory: android
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$APK" > ../signer-certs.txt
+          grep -q "$SIGNER_CERT_SHA256" ../signer-certs.txt \
+            || { echo "SIGNER ASSERTION FAIL: signer cert does not match the custody anchor"; cat ../signer-certs.txt; exit 1; }
+          sha256sum "$APK" | awk '{print $1}' > ../apk-sha256.txt
+          cp "$APK" ../ore-kingdom-release.apk
+          cat ../signer-certs.txt
+          cat ../apk-sha256.txt
+
+      - name: Upload seal evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ok-seal-l3-sealed-apk
+          path: |
+            ore-kingdom-release.apk
+            signer-certs.txt
+            apk-sha256.txt
+            jdk-version.txt
+          if-no-files-found: error
+
+      - name: Wipe staged signing material (ALWAYS)
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/ore-kingdom-release.jks" ]; then
+            dd if=/dev/zero of="$RUNNER_TEMP/ore-kingdom-release.jks" bs=1k count=64 conv=notrunc 2>/dev/null || true
+            rm -f "$RUNNER_TEMP/ore-kingdom-release.jks"
+          fi
+          echo "signing material wiped"
+
+  cold-run:
+    name: Cold-run battery on the SEALED APK (API 35)
+    needs: seal-build
+    runs-on: ubuntu-latest # GitHub-hosted only
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download sealed APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ok-seal-l3-sealed-apk
+          path: sealed
+
+      - name: Verify the downloaded APK is the sealed one
+        run: |
+          test "$(sha256sum sealed/ore-kingdom-release.apk | awk '{print $1}')" = "$(cat sealed/apk-sha256.txt)" \
+            || { echo "Downloaded APK hash != sealed hash — refusing to cold-run a different binary"; exit 1; }
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Cold run — online (sealed APK)
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 2048
+          script: bash android/ci/emulator-cold-run.sh online "$GITHUB_WORKSPACE/sealed/ore-kingdom-release.apk" "$GITHUB_WORKSPACE/evidence/online"
+
+      - name: Upload evidence — online
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cold-run-evidence-online
+          path: evidence/online
+          if-no-files-found: warn
+
+      - name: Cold run — no-wallet (sealed APK)
+        if: ${{ !cancelled() }}
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 2048
+          script: bash android/ci/emulator-cold-run.sh nowallet "$GITHUB_WORKSPACE/sealed/ore-kingdom-release.apk" "$GITHUB_WORKSPACE/evidence/nowallet"
+
+      - name: Upload evidence — no-wallet
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cold-run-evidence-nowallet
+          path: evidence/nowallet
+          if-no-files-found: warn
+
+      - name: Cold run — offline (sealed APK)
+        if: ${{ !cancelled() }}
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 2048
+          script: bash android/ci/emulator-cold-run.sh offline "$GITHUB_WORKSPACE/sealed/ore-kingdom-release.apk" "$GITHUB_WORKSPACE/evidence/offline"
+
+      - name: Upload evidence — offline
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cold-run-evidence-offline
+          path: evidence/offline
+          if-no-files-found: warn
+
+  rig:
+    name: Wallet rig — suite all (owed dispatch #1, CR-5 re-attempt)
+    needs: seal-build
+    runs-on: ubuntu-latest # GitHub-hosted only
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: ./.github/actions/wallet-rig
+        with:
+          api-level: 35
+          suite: all
+          avd-name: ok-rig-35
+          mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
+
+  rig-control:
+    name: Wallet rig control — neutered cure MUST fail CR-3 (owed dispatch #2)
+    needs: seal-build
+    runs-on: ubuntu-latest # GitHub-hosted only
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Neuter the WHOLE KFC-008 cure (faulted control build)
+        run: git apply android/ci/control-neuter.patch
+      - uses: ./.github/actions/wallet-rig
+        with:
+          api-level: 35
+          suite: ctl
+          avd-name: ok-rig-control-35
+          mock-private-key: ${{ secrets.MOCK_WALLET_PRIVATE_KEY }}
+          expect: fail
