@@ -116,18 +116,28 @@ PY
 }
 
 dump_ui() { # $1 = destination file
-  local dst="$1" attempt
+  # R2-m5 (2026-11-22): uiautomator's OWN output is evidence, never
+  # discarded. Every attempt's dump stdout/stderr and the follow-up
+  # `cat` stderr are appended to $OUT/dump-ui-errors.log (with the
+  # destination + attempt number), so a hierarchy failure is
+  # diagnosable from the evidence set instead of silent — the
+  # 2026-11-21 suite-all leg produced NO VERDICT with no recoverable
+  # cause precisely because this output used to go to /dev/null.
+  local dst="$1" attempt errlog="$OUT/dump-ui-errors.log"
   for attempt in 1 2 3 4 5 6 7 8; do
     adb shell rm -f /sdcard/window_dump.xml >/dev/null 2>&1 || true
-    timeout 40 adb shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 || true
-    adb exec-out cat /sdcard/window_dump.xml > "$dst.tmp" 2>/dev/null || true
+    {
+      echo "--- dump_ui attempt $attempt/8 -> $dst ($(date -u +%H:%M:%SZ))"
+      timeout 40 adb shell uiautomator dump /sdcard/window_dump.xml 2>&1 || echo "uiautomator exit=$?"
+    } >> "$errlog" 2>&1
+    adb exec-out cat /sdcard/window_dump.xml > "$dst.tmp" 2>> "$errlog" || true
     if grep -q "</hierarchy>" "$dst.tmp" 2>/dev/null && dump_is_substantive "$dst.tmp"; then
       mv "$dst.tmp" "$dst"
       return 0
     fi
     sleep 3
   done
-  log "dump_ui: FAILED after 8 attempts -> $dst"
+  log "dump_ui: FAILED after 8 attempts -> $dst (uiautomator output preserved in $errlog)"
   return 1
 }
 
@@ -438,28 +448,33 @@ satisfy_auth_prompt() { # works the biometric/PIN prompt until it clears
 }
 
 authenticate_mock() {
+  # R2-m8 (2026-11-22): the attempt is recorded the moment it starts,
+  # and every failure return below overwrites the note with the
+  # attempted-and-failed reason — the verdict must never again read
+  # "not attempted" for an authentication that was tried and failed.
+  auth_note="attempted — in progress (mock wallet opened; outcome not yet recorded)"
   log "auth: opening mock wallet to Authenticate (15-min window)"
   ensure_unlocked
   dismiss_host_anr
   adb shell am start -W -n "$MOCK_ACT" >/dev/null 2>&1 || true
   sleep 3
   local f="$TMPD/mock-main.xml"
-  dump_ui "$f" || return 1
+  dump_ui "$f" || { auth_note="attempted — FAILED (no hierarchy dump of the mock main screen; see dump-ui-errors.log)"; log "auth: $auth_note"; return 1; }
   if grep -q "isn.t responding" "$f"; then
     dismiss_host_anr
     sleep 2
-    dump_ui "$f" || return 1
+    dump_ui "$f" || { auth_note="attempted — FAILED (no hierarchy dump after dismissing the not-responding dialog; see dump-ui-errors.log)"; log "auth: $auth_note"; return 1; }
   fi
   if ! grep -q "AUTHENTICATE\|Authenticate" "$f" && looks_locked "$f"; then
     log "auth: mock launch landed behind the keyguard — unlocking + relaunching"
     ensure_unlocked
     adb shell am start -W -n "$MOCK_ACT" >/dev/null 2>&1 || true
     sleep 3
-    dump_ui "$f" || return 1
+    dump_ui "$f" || { auth_note="attempted — FAILED (no hierarchy dump after keyguard relaunch; see dump-ui-errors.log)"; log "auth: $auth_note"; return 1; }
   fi
   grep -oE 'text="[^"]+"' "$f" | sort -u | head -12 | tee -a "$LANE_LOG" || true
   if grep -q "AUTHENTICATE\|Authenticate" "$f"; then
-    tap_exact "$f" "AUTHENTICATE" || tap_exact "$f" "Authenticate" || tap_text "$f" "UTHENTICATE" || return 1
+    tap_exact "$f" "AUTHENTICATE" || tap_exact "$f" "Authenticate" || tap_text "$f" "UTHENTICATE" || { auth_note="attempted — FAILED (Authenticate control present but not tappable)"; log "auth: $auth_note"; return 1; }
     if satisfy_auth_prompt; then
       date +%s > "$AUTH_EPOCH_FILE"
       auth_note="authenticated (window opened $(date -u +%H:%M:%S)Z)"
@@ -469,11 +484,11 @@ authenticate_mock() {
       snap "mock-after-auth.png"
       return 0
     fi
-    auth_note="AUTHENTICATE PROMPT NOT SATISFIED"
+    auth_note="attempted — AUTHENTICATE PROMPT NOT SATISFIED"
     log "auth: $auth_note"
     return 1
   fi
-  auth_note="Authenticate button not found on mock main screen"
+  auth_note="attempted — FAILED (Authenticate button not found on mock main screen)"
   log "auth: $auth_note"
   dump_ui "$OUT/mock-main-fail.xml" || true
   snap "mock-main-fail.png"
@@ -543,11 +558,19 @@ type_text() { # $1 = value; the target field must be focused
 
 # --- Ore Kingdom navigation / state helpers --------------------------------------
 signin_screen_state() { # $1 = dump file; echoes the SignIn screen's state
+  # R2-m7 (2026-11-22): "ready" requires POSITIVE evidence — the
+  # "Connect wallet & sign in" button, which SignInScreen renders
+  # only in the Disconnected and Error states (the resolved states).
+  # The "READ THIS FIRST" plaque is static text rendered in EVERY
+  # state of the screen, so it must never classify a dump as ready
+  # on its own: previously any unrecognised non-Working dump —
+  # including a still-parked caller whose Working text had not
+  # rendered — read as the default "ready".
   if dump_ui "$1"; then
     if grep -q "SIGNED IN" "$1" && grep -q "$RIG_SKR_NAME" "$1"; then echo "signedin"
     elif grep -q "Waiting for wallet" "$1"; then echo "working"
     elif grep -q "Wallet connected:" "$1"; then echo "connected"
-    elif grep -q "Connect wallet & sign in" "$1" || grep -q "READ THIS FIRST" "$1"; then echo "ready"
+    elif grep -q "Connect wallet & sign in" "$1"; then echo "ready"
     else echo "unknown"; fi
   else echo "nodump"; fi
 }
@@ -807,7 +830,13 @@ abandon_connect_rep() { # $1 = rep; echoes "PASS|FAIL <detail>" on stdout's last
   local tag="cr3r$rep"
   log "=== CR-3 rep $rep: abandon connect ==="
   fresh_process "$tag"
-  sign_out || { echo "FAIL(rep $rep: could not reach a signed-out start)"; return; }
+  # R2-m6 (2026-11-22): a setup precondition failure is NOT-RUN in
+  # every cell (CR-1/CR-2/CR-4/CR-5 already grade sign_out this way);
+  # only a genuine in-cell failure is FAIL. This string previously
+  # read FAIL here, misreporting a rig/setup failure as a product
+  # failure — and feeding the control gate a FAIL it could mistake
+  # for fault detection.
+  sign_out || { echo "NOT-RUN(rep $rep: could not reach a signed-out start)"; return; }
   goto_signin || { echo "FAIL(rep $rep: sign-in screen unreachable)"; return; }
   auth_fresh_enough
   adb logcat -c >/dev/null 2>&1 || true
@@ -820,8 +849,20 @@ abandon_connect_rep() { # $1 = rep; echoes "PASS|FAIL <detail>" on stdout's last
   if ! wait_sheet "$sf" 45; then echo "FAIL(rep $rep: no sheet to abandon)"; return; fi
   log "$tag: connect sheet up; abandoning via HOME (no approval)"
   snap "shot-$tag-sheet.png"
+  # R2-m7 (2026-11-22): the resolution clock starts at the ABANDON
+  # GESTURE, not after it. abandon_and_return itself takes ~9 s of
+  # sleeps (normal mock) — a poll that starts afterwards can only
+  # ever report "resolved sometime during the gesture" (~0s), which
+  # measures nothing against the 30 s bar. Both numbers are now
+  # recorded: seconds from the gesture to the return, and seconds
+  # from the gesture to the observed resolution (an upper bound —
+  # the true resolution lies between the two).
+  local t_abandon t_return
+  t_abandon="$(date +%s)"
   abandon_and_return "$tag"
-  # Poll for in-process resolution within the 30 s bar.
+  t_return="$(date +%s)"
+  log "$tag: abandon gesture took $((t_return - t_abandon))s; resolution clock runs from the gesture (t0)"
+  # Poll for in-process resolution within the 30 s bar (from return).
   local elapsed=0 st="working"
   while [ "$elapsed" -lt 30 ]; do
     st="$(signin_screen_state "$TMPD/$tag-poll.xml")"
@@ -829,7 +870,8 @@ abandon_connect_rep() { # $1 = rep; echoes "PASS|FAIL <detail>" on stdout's last
     if [ "$st" = "signedin" ]; then break; fi
     sleep 5; elapsed=$((elapsed + 5))
   done
-  log "$tag: post-abandon poll: state=$st after ${elapsed}s; pid now $(app_pid) (was $pid0); fg=$(fg_pkg)"
+  local t_resolved=$(( $(date +%s) - t_abandon ))
+  log "$tag: post-abandon poll: state=$st after ${elapsed}s of polling ($((t_return - t_abandon))s gesture + poll; resolved no later than ${t_resolved}s after the abandon gesture began); pid now $(app_pid) (was $pid0); fg=$(fg_pkg)"
   capture_window "$tag-resolution"
   if [ "$st" = "signedin" ]; then
     echo "FAIL(rep $rep: abandoned connect completed to a session with no approval — zombie result delivered as success)"
@@ -856,7 +898,7 @@ abandon_connect_rep() { # $1 = rep; echoes "PASS|FAIL <detail>" on stdout's last
   capture_window "$tag-retry"
   if profile_signed_in_ok && [ "$(app_pid)" = "$pid0" ]; then
     sign_out || true
-    echo "PASS(rep $rep: resolution to state '$st' in ~${elapsed}s; ONE retry tap + $approvals sheet approval(s) -> signed in, SAME process $pid0)"
+    echo "PASS(rep $rep: resolution to state '$st' observed ${t_resolved}s after the abandon gesture began (gesture $((t_return - t_abandon))s + ${elapsed}s polling; true resolution between return and that observation); ONE retry tap + $approvals sheet approval(s) -> signed in, SAME process $pid0)"
   else
     echo "FAIL(rep $rep: retry did not reach signed-in in-process within 150s (approvals=$approvals, pid $(app_pid) vs $pid0))"
   fi
@@ -870,9 +912,12 @@ cell_cr3() {
     log "cr3 rep $rep verdict: $verdict"
     results="$results | rep$rep: $verdict"
   done
+  # R2-m6: a NOT-RUN rep must surface as a NOT-RUN cell (a rig
+  # failure), never be swept into PASS by the no-FAIL default.
   case "$results" in
-    *FAIL*) cr3="FAIL($results )" ;;
-    *)      cr3="PASS(all ${CR3_REPS:-3} reps: resolution + retry-to-signed-in in-process$results )" ;;
+    *FAIL*)    cr3="FAIL($results )" ;;
+    *NOT-RUN*) cr3="NOT-RUN($results )" ;;
+    *)         cr3="PASS(all ${CR3_REPS:-3} reps: resolution + retry-to-signed-in in-process$results )" ;;
   esac
   log "cr3: $cr3"
 }
