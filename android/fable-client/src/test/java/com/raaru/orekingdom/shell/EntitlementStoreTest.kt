@@ -83,7 +83,7 @@ class EntitlementStoreTest {
         val dupes = channels() + ch("ch_general", "THE FLOOR")
         val s = started(FakeTransport(ent(listOf("ch_general")), dupes, vacant))
         val ids = s.rail.value.categories.flatMap { it.channels }.map { it.id }
-        assertEquals(listOf("ch_general", "ch_help"), ids)
+        assertEquals(listOf("ch_announcements", "ch_general", "ch_help"), ids)
 
         // Same on the push path: a lapsed push carrying a duplicate id.
         val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)

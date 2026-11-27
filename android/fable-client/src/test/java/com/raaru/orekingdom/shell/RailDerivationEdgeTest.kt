@@ -115,7 +115,7 @@ class RailDerivationEdgeTest {
     }
 
     @Test
-    fun duplicateChannelIdsAreNotDedupedByTheStore() {
+    fun duplicateChannelIdsAreDedupedByTheStore() {
         val s = started(
             listOf(
                 ch("ch_a", "THE FLOOR"),
@@ -123,8 +123,11 @@ class RailDerivationEdgeTest {
             )
         )
         val channels = s.rail.value.categories.flatMap { it.channels }
-        // the store does not dedupe; duplicate DTO ids are a host-contract violation the rail would render twice
-        assertEquals(2, channels.size)
-        assertEquals(listOf("ch_a", "ch_a"), channels.map { it.id })
+        // P-5 (2026-11-26 hardening): duplicate DTO ids are a host-contract
+        // violation, and the store now drops them first-wins — ChannelRail
+        // keys rows channel:<id>, so a duplicate reaching the rail crashes
+        // the list. (This test previously pinned the un-deduped behaviour.)
+        assertEquals(1, channels.size)
+        assertEquals(listOf("ch_a"), channels.map { it.id })
     }
 }
