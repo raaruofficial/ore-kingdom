@@ -16,6 +16,7 @@
 set -u
 APK="$1"
 EVIDENCE="$2"
+BACKEND_DIR="$3"
 PKG="com.raaru.orekingdom.debug"
 ACTIVITY="$PKG/com.raaru.orekingdom.kingdom.KingdomActivity"
 mkdir -p "$EVIDENCE"
@@ -23,18 +24,26 @@ FAIL=0
 note() { echo "NOTE: $1" | tee -a "$EVIDENCE/checks.txt"; }
 fail() { echo "FAIL: $1" | tee -a "$EVIDENCE/checks.txt"; FAIL=1; }
 
-adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 2; done' || true
-adb install -r "$APK" | tee "$EVIDENCE/install.txt" || fail "APK install failed"
-
-# The backend must be reachable from the emulator before launch.
-for i in $(seq 1 15); do
-  if adb shell 'curl -s http://10.0.2.2:8799/api/spotlight || wget -qO- http://10.0.2.2:8799/api/spotlight' > "$EVIDENCE/backend-probe.txt" 2>/dev/null && grep -q floor_usd "$EVIDENCE/backend-probe.txt"; then
-    note "backend reachable from emulator at 10.0.2.2:8799"
+# Start the local backend IN THIS STEP: a background process from an
+# earlier workflow step does not reliably survive step boundaries on
+# GitHub-hosted runners (first run, 45959233758: host step reported
+# up, emulator probe found nothing listening).
+KINGDOM_PORT=8799 KINGDOM_HOST=0.0.0.0 node "$BACKEND_DIR/server.mjs" > "$EVIDENCE/backend.log" 2>&1 &
+BACKEND_PID=$!
+trap 'kill $BACKEND_PID 2>/dev/null || true' EXIT
+READY=0
+for i in $(seq 1 20); do
+  if curl -sf http://127.0.0.1:8799/api/spotlight > "$EVIDENCE/backend-probe.txt" 2>/dev/null; then
+    READY=1
+    note "backend up on the host (127.0.0.1:8799, attempt $i)"
     break
   fi
-  sleep 2
-  [ "$i" = 15 ] && fail "backend not reachable from emulator"
+  sleep 1
 done
+[ "$READY" = 1 ] || fail "backend did not come up on the host"
+
+adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 2; done' || true
+adb install -r "$APK" | tee "$EVIDENCE/install.txt" || fail "APK install failed"
 
 adb shell am force-stop "$PKG" || true
 adb shell am start -W -n "$ACTIVITY" | tee "$EVIDENCE/launch.txt" || true

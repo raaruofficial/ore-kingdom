@@ -46,18 +46,6 @@ jobs:
         working-directory: android
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Start local backend on the host
-        working-directory: server/kingdom
-        env:
-          KINGDOM_PORT: "8799"
-          KINGDOM_HOST: "0.0.0.0"
-        run: |
-          nohup node server.mjs > backend.log 2>&1 &
-          for i in $(seq 1 20); do
-            curl -sf http://127.0.0.1:8799/api/spotlight && break
-            sleep 1
-          done
-
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -72,7 +60,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 2048
-          script: bash android/ci/kingdom-cold-run.sh "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk" "$GITHUB_WORKSPACE/evidence/kingdom"
+          script: bash android/ci/kingdom-cold-run.sh "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk" "$GITHUB_WORKSPACE/evidence/kingdom" "$GITHUB_WORKSPACE/server/kingdom"
 
       - name: Upload evidence
         if: always()

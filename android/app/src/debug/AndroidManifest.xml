@@ -6,5 +6,14 @@
     xmlns:tools="http://schemas.android.com/tools">
     <application
         android:usesCleartextTraffic="true"
-        tools:replace="android:usesCleartextTraffic" />
+        tools:replace="android:usesCleartextTraffic">
+        <!-- Debug builds only: the kingdom cold-run lane launches
+             KingdomActivity directly via adb (am start -W), which a
+             non-exported activity refuses. Release keeps
+             exported=false from the main manifest. -->
+        <activity
+            android:name=".kingdom.KingdomActivity"
+            android:exported="true"
+            tools:replace="android:exported" />
+    </application>
 </manifest>
