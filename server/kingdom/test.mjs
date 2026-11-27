@@ -1085,6 +1085,212 @@ try {
   ok(c53Neg.body.messages.length === c53Full.body.messages.length - 5 && c53Neg.body.messages[0].seq === c53Full.body.messages[5].seq,
     "history malformed: limit=-5 returns the eligible list minus its first five (finding: no default fallback)");
 
+  const c54Sock = await new WsTest().connect("u_free");
+  c54Sock.send({ type: "subscribe", payload: { channel_ids: [] } });
+  await new Promise((r) => setTimeout(r, 300));
+  const c54Snap = c54Sock.frames.filter((f) => f.type === "presence").slice(-5);
+  ok(c54Sock.count((f) => f.type === "error") === 0 && c54Snap.length === 5 &&
+    c54Snap.map((f) => f.payload.presence.user_id).sort().join(",") === "u_free,u_host,u_mod,u_op,u_spammer",
+    "subscribe edge: an empty channel list still delivers the five-user presence snapshot, no error");
+  c54Sock.send({ type: "subscribe", payload: { channel_ids: ["ch_nope"] } });
+  const c54Err = await c54Sock.waitFor((f) => f.type === "error", "c54 unknown id refusal");
+  ok(c54Err.payload.code === "not_entitled" && c54Err.payload.channel_id === "ch_nope",
+    "subscribe edge: an unknown channel id is refused per-id with not_entitled + the id");
+  await new Promise((r) => setTimeout(r, 300));
+  const c54Before = c54Sock.count((f) => f.type === "presence");
+  c54Sock.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await new Promise((r) => setTimeout(r, 300));
+  ok(c54Sock.count((f) => f.type === "presence") === c54Before + 5,
+    "subscribe edge: a second subscribe re-sends the full presence snapshot");
+  c54Sock.close();
+  c54Sock.close();
+
+const c55Sock = await new WsTest().connect("u_host");
+c55Sock.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+await c55Sock.waitFor((f) => f.type === "presence", "c55 subscribed");
+await new Promise((r) => setTimeout(r, 300));
+const c55Base = c55Sock.frames.length;
+c55Sock.send({ type: "unsubscribe", payload: { channel_ids: ["ch_strategy"] } });
+await new Promise((r) => setTimeout(r, 250));
+ok(c55Sock.frames.length === c55Base, "unsubscribe edge: unsubscribing a never-subscribed id produces no frame at all");
+const c55Other = await new WsTest().connect("u_op");
+c55Other.send({ type: "send", id: "c_c55_1", channel_id: "ch_general", payload: { body: "c55 still subscribed" } });
+const c55Got = await c55Sock.waitFor((f) => f.type === "message" && f.payload.message.body === "c55 still subscribed", "c55 delivery after no-op unsubscribe");
+ok(!!c55Got, "unsubscribe edge: existing subscriptions keep delivering after the no-op");
+c55Sock.close(); c55Other.close();
+  c55Sock.close(); c55Other.close();
+
+  const c56ThreadsBefore = await get("/api/threads?channel_id=ch_general", "u_host");
+  const c56Author = await new WsTest().connect("u_host");
+  const c56Obs = await new WsTest().connect("u_mod");
+  c56Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await c56Obs.waitFor((f) => f.type === "presence", "c56 observer ready");
+  c56Author.send({ type: "send", id: "c_c56_1", channel_id: "ch_general", payload: { body: "c56 quoting you", reply_to: "m_seed_42" } });
+  const c56Ack = await c56Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_c56_1", "c56 ack");
+  const c56Echo = await c56Obs.waitFor((f) => f.type === "message" && f.payload.message.id === c56Ack.payload.message_id, "c56 broadcast");
+  ok(c56Echo.payload.message.reply_to === "m_seed_42", "send edge: a send carrying reply_to broadcasts it verbatim");
+  const c56ThreadsAfter = await get("/api/threads?channel_id=ch_general", "u_host");
+  ok(c56ThreadsAfter.body.threads.length === c56ThreadsBefore.body.threads.length,
+    "send edge: a reply_to send leaves the channel's thread list untouched");
+  c56Author.close(); c56Obs.close();
+
+  const c57Author = await new WsTest().connect("u_host");
+  const c57Obs = await new WsTest().connect("u_mod");
+  c57Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await c57Obs.waitFor((f) => f.type === "presence", "c57 observer ready");
+  c57Author.send({ type: "send", id: "c_c57_1", channel_id: "ch_general", payload: {} });
+  const c57Ack1 = await c57Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_c57_1", "c57 bodyless ack");
+  const c57Echo1 = await c57Obs.waitFor((f) => f.type === "message" && f.payload.message.id === c57Ack1.payload.message_id, "c57 bodyless broadcast");
+  ok(c57Echo1.payload.message.body === "", "send edge: a send with no body field is acked and broadcast with an empty body");
+  c57Author.send({ type: "send", id: "c_c57_2", channel_id: "ch_general", payload: { body: "" } });
+  const c57Ack2 = await c57Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_c57_2", "c57 empty ack");
+  const c57Echo2 = await c57Obs.waitFor((f) => f.type === "message" && f.payload.message.id === c57Ack2.payload.message_id, "c57 empty broadcast");
+  ok(c57Echo2.payload.message.body === "" && c57Ack2.payload.message_id !== c57Ack1.payload.message_id,
+    "send edge: a send with an explicitly empty body behaves identically, a distinct message");
+  c57Author.close(); c57Obs.close();
+
+  const c58Author = await new WsTest().connect("u_host");
+  c58Author.send({ type: "send", channel_id: "ch_general", payload: { body: "c58 no id here" } });
+  const c58Ack1 = await c58Author.waitFor((f) => f.type === "ack", "c58 first ack");
+  ok(!("for_id" in c58Ack1.payload) && typeof c58Ack1.payload.message_id === "string",
+    "send edge: an id-less send is acked with no for_id key in the payload");
+  c58Author.send({ type: "send", channel_id: "ch_general", payload: { body: "c58 no id here" } });
+  const c58Ack2 = await c58Author.waitFor((f) => f.type === "ack" && f !== c58Ack1, "c58 second ack");
+  ok(c58Ack2.payload.message_id !== c58Ack1.payload.message_id,
+    "send edge: a repeated id-less send mints a second message (no idempotency without a key)");
+  const c58Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  ok(c58Hist.body.messages.filter((m) => m.body === "c58 no id here").length === 2,
+    "send edge: both id-less sends persist in history");
+  c58Author.close();
+
+  const c59Member = await new WsTest().connect("u_host");
+  c59Member.send({ type: "send", id: "c_c59_1", channel_id: "ch_announcements", payload: { body: "c59 hear ye" } });
+  const c59Err = await c59Member.waitFor((f) => f.type === "error", "c59 send refusal");
+  ok(c59Err.payload.code === "not_entitled" && c59Err.payload.for_id === "c_c59_1",
+    "house channel: a member's send to announcements answers not_entitled");
+  const c59Hist = await get("/api/history?channel_id=ch_announcements&limit=5", "u_host");
+  c59Member.send({ type: "react", channel_id: "ch_announcements", payload: { message_id: c59Hist.body.messages[0].id, emoji: "🔥", op: "add" } });
+  const c59Err2 = await c59Member.waitFor((f) => f.type === "error" && f !== c59Err, "c59 react refusal");
+  ok(c59Err2.payload.code === "not_entitled", "house channel: a member's react in announcements answers not_entitled");
+  c59Member.close();
+
+  const c60Author = await new WsTest().connect("u_host");
+  c60Author.send({ type: "send", id: "c_c60_1", channel_id: "ch_general", payload: { body: "c60 original" } });
+  const c60Ack = await c60Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_c60_1", "c60 ack");
+  c60Author.send({ type: "edit", channel_id: "ch_help_desk", payload: { message_id: c60Ack.payload.message_id, body: "c60 hijacked" } });
+  const c60Err = await c60Author.waitFor((f) => f.type === "error", "c60 mismatched edit refusal");
+  ok(c60Err.payload.code === "not_entitled", "edit edge: an edit naming the message under the wrong channel answers not_entitled");
+  const c60Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const c60Msg = c60Hist.body.messages.find((m) => m.id === c60Ack.payload.message_id);
+  ok(c60Msg.body === "c60 original" && c60Msg.edited_at === null, "edit edge: the mismatched edit leaves the message untouched");
+  c60Author.close();
+
+  const c61Author = await new WsTest().connect("u_host");
+  const c61Obs = await new WsTest().connect("u_mod");
+  c61Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await c61Obs.waitFor((f) => f.type === "presence", "c61 observer ready");
+  c61Author.send({ type: "send", id: "c_c61_1", channel_id: "ch_general", payload: { body: "c61 delete then edit" } });
+  const c61Ack = await c61Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_c61_1", "c61 ack");
+  c61Author.send({ type: "delete", channel_id: "ch_general", payload: { message_id: c61Ack.payload.message_id } });
+  await c61Obs.waitFor((f) => f.type === "message.delete" && f.payload.message_id === c61Ack.payload.message_id, "c61 delete broadcast");
+  c61Author.send({ type: "edit", channel_id: "ch_general", payload: { message_id: c61Ack.payload.message_id, body: "c61 edited corpse" } });
+  const c61Upd = await c61Obs.waitFor((f) => f.type === "message.update" && f.payload.message.id === c61Ack.payload.message_id, "c61 edit of deleted broadcast");
+  ok(c61Upd.payload.message.body === "c61 edited corpse" && c61Upd.payload.message.edited_at !== null && c61Upd.payload.message.deleted_at !== null,
+    "edit finding: editing a deleted message succeeds and broadcasts the update on the tombstone");
+  c61Author.close(); c61Obs.close();
+
+  const c62Author = await new WsTest().connect("u_host");
+  const c62Obs = await new WsTest().connect("u_mod");
+  c62Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await c62Obs.waitFor((f) => f.type === "presence", "c62 observer ready");
+  c62Author.send({ type: "send", id: "c_c62_1", channel_id: "ch_general", payload: { body: "c62 react target" } });
+  const c62Ack = await c62Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_c62_1", "c62 ack");
+  const c62Mid = c62Ack.payload.message_id;
+  c62Author.send({ type: "react", channel_id: "ch_general", payload: { message_id: c62Mid, emoji: "🔥", op: "add" } });
+  const c62Added = await c62Obs.waitFor((f) => f.type === "reaction" && f.payload.message_id === c62Mid, "c62 add broadcast");
+  ok(c62Added.payload.count === 1, "react edge: the setup add lands with count 1");
+  c62Author.send({ type: "react", channel_id: "ch_general", payload: { message_id: c62Mid, emoji: "🔥", op: "bogus" } });
+  const c62Bogus = await c62Obs.waitFor((f) => f.type === "reaction" && f.payload.message_id === c62Mid && f !== c62Added, "c62 bogus op broadcast");
+  ok(c62Bogus.payload.count === 0 && !c62Bogus.payload.actor_ids.includes("u_host"),
+    "react edge: a bogus op is treated as a remove — the broadcast fires with the actor removed");
+  c62Author.close(); c62Obs.close();
+
+  const c63Author = await new WsTest().connect("u_host");
+  c63Author.send({ type: "send", id: "c_c63_1", channel_id: "ch_general", payload: { body: "c63 vanishing reaction" } });
+  const c63Ack = await c63Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_c63_1", "c63 ack");
+  c63Author.send({ type: "react", channel_id: "ch_general", payload: { message_id: c63Ack.payload.message_id, emoji: "🔥", op: "add" } });
+  await new Promise((r) => setTimeout(r, 250));
+  c63Author.send({ type: "react", channel_id: "ch_general", payload: { message_id: c63Ack.payload.message_id, emoji: "🔥", op: "remove" } });
+  await new Promise((r) => setTimeout(r, 250));
+  const c63Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const c63Msg = c63Hist.body.messages.find((m) => m.id === c63Ack.payload.message_id);
+  ok(c63Msg.reactions.length === 0, "react edge: after the only actor removes their reaction, history shows no entry for the emoji");
+  c63Author.close();
+
+  const c64Obs = await new WsTest().connect("u_mod");
+  c64Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await c64Obs.waitFor((f) => f.type === "presence", "c64 observer ready");
+  const c64Stranger = await new WsTest().connect("u_op");
+  c64Stranger.send({ type: "typing", channel_id: "ch_general", payload: { state: "start" } });
+  const c64Relay = await c64Obs.waitFor((f) => f.type === "typing" && f.payload.user_id === "u_op", "c64 stranger typing relay");
+  ok(c64Relay.payload.state === "start", "typing finding: a non-subscriber's typing is relayed to the channel's subscribers");
+  c64Obs.close(); c64Stranger.close();
+
+  const c65Obs = await new WsTest().connect("u_mod");
+  const c65Actor = await new WsTest().connect("u_free");
+  await new Promise((r) => setTimeout(r, 300));
+  c65Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  const c65Before = await c65Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_free", "c65 snapshot read");
+  c65Actor.send({ type: "presence.set", payload: { invisible: true, state: "idle", activity: "faking it" } });
+  const c65Frame = await c65Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_free" && f.payload.presence.invisible === true, "c65 set broadcast");
+  ok(c65Frame.payload.presence.state === c65Before.payload.presence.state && c65Frame.payload.presence.activity === c65Before.payload.presence.activity,
+    "presence edge: presence.set honours only invisible — state and activity in the frame are ignored");
+  c65Actor.send({ type: "presence.set", payload: { invisible: false } });
+  await c65Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_free" && f.payload.presence.invisible === false && f !== c65Frame, "c65 restore broadcast");
+  c65Obs.close(); c65Actor.close();
+  c65Actor.send({ type: "presence.set", payload: { invisible: false } });
+  await c65Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_free" && f.payload.presence.invisible === false && f !== c65Frame, "c65 restore broadcast");
+  c65Obs.close(); c65Actor.close();
+  c65Actor.send({ type: "presence.set", payload: { invisible: false } });
+  await c65Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_free" && f.payload.presence.invisible === false && f !== c65Frame, "c65 restore broadcast");
+  c65Obs.close(); c65Actor.close();
+
+  const c66Obs = await new WsTest().connect("u_host");
+  const c66First = await new WsTest().connect("u_mod");
+  c66First.close();
+  await c66Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_mod" && f.payload.presence.state === "offline", "c66 first disconnect dark");
+  const c66Second = await new WsTest().connect("u_mod");
+  await c66Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_mod" && f.payload.presence.state === "online", "c66 promotion");
+  c66Second.send({ type: "presence.set", payload: { invisible: true } });
+  await c66Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_mod" && f.payload.presence.invisible === true, "c66 invisible set");
+  c66Second.close();
+  await c66Obs.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_mod" && f.payload.presence.state === "offline" && f.payload.presence.invisible === true, "c66 disconnect dark");
+  const c66Base = c66Obs.count((f) => f.type === "presence" && f.payload.presence.user_id === "u_mod");
+  const c66Third = await new WsTest().connect("u_mod");
+  await new Promise((r) => setTimeout(r, 300));
+  ok(c66Obs.count((f) => f.type === "presence" && f.payload.presence.user_id === "u_mod") === c66Base,
+    "presence edge: an invisible user's reconnect fires no presence broadcast");
+  const c66Probe = await new WsTest().connect("u_op");
+  c66Probe.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  const c66Snap = await c66Probe.waitFor((f) => f.type === "presence" && f.payload.presence.user_id === "u_mod", "c66 snapshot read");
+  ok(c66Snap.payload.presence.state === "offline" && c66Snap.payload.presence.invisible === true,
+    "presence edge: the snapshot still shows the reconnected invisible user offline and invisible");
+  c66Third.send({ type: "presence.set", payload: { invisible: false } });
+  c66Third.close(); c66Probe.close(); c66Obs.close();
+  c66Second.send({ type: "presence.set", payload: { invisible: false } });
+  c66Second.close(); c66Probe.close(); c66Obs.close();
+
+  const c67Head = await get("/api/history?channel_id=ch_help_desk&limit=1", "u_host");
+  const c67HeadSeq = c67Head.body.messages[0].seq;
+  const c67Sock = await new WsTest().connect("u_op");
+  c67Sock.send({ type: "resume", payload: { last_seq: { ch_help_desk: c67HeadSeq - 500 } } });
+  const c67Deadline = Date.now() + 5000;
+  while (c67Sock.count((f) => f.type === "message" && f.channel_id === "ch_help_desk") < 500 && Date.now() < c67Deadline) await new Promise((r) => setTimeout(r, 25));
+  ok(c67Sock.count((f) => f.type === "message" && f.channel_id === "ch_help_desk") === 500,
+    "resume edge: a gap of exactly 500 replays all 500 messages");
+  ok(c67Sock.count((f) => f.type === "resync") === 0, "resume edge: a gap of exactly 500 sends no resync frame");
+  c67Sock.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
