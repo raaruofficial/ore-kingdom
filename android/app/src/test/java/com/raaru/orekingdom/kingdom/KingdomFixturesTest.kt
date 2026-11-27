@@ -19,7 +19,7 @@ import org.junit.Test
 class KingdomFixturesTest {
 
     private fun fixturesFile(): File {
-        var dir: File? = File(System.getProperty("user.dir"))
+        var dir: File? = File(System.getProperty("user.dir") ?: ".")
         repeat(9) {
             val candidate = File(dir, "server/kingdom/fixtures/frames.json")
             if (candidate.isFile) return candidate
@@ -52,15 +52,14 @@ class KingdomFixturesTest {
         assertEquals(19, entries.size)
         entries.forEach { entry ->
             val frame = entry.getJSONObject("frame")
-            assertEquals(
-                "envelope keys of ${entry.getString("name")}",
-                declared(entry, "envelope_keys"),
-                frame.keySet(),
+            val name = entry.getString("name")
+            assertTrue(
+                "envelope keys of $name: declared=${declared(entry, "envelope_keys")} actual=${frame.keySet()}",
+                declared(entry, "envelope_keys") == frame.keySet(),
             )
-            assertEquals(
-                "payload keys of ${entry.getString("name")}",
-                declared(entry, "payload_keys"),
-                frame.getJSONObject("payload").keySet(),
+            assertTrue(
+                "payload keys of $name: declared=${declared(entry, "payload_keys")} actual=${frame.getJSONObject("payload").keySet()}",
+                declared(entry, "payload_keys") == frame.getJSONObject("payload").keySet(),
             )
         }
     }
