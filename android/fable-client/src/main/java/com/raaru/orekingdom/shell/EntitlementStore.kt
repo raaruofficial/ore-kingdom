@@ -241,7 +241,10 @@ class EntitlementStore(
         val gone = (pendingGone + before.map { it.id }).filterNot { it in freshIds }
         pendingGone = emptySet()
         if (gone.isNotEmpty()) attempt { transport.unsubscribe(gone) }
-        channels = fresh
+        // P-5: a host payload repeating a channel id would put two rows
+        // with the same LazyColumn key (channel:<id>) in the rail — the
+        // crash class fixed in ServerHomeFeed. First occurrence wins.
+        channels = fresh.distinctBy { it.id }
         loaded = true
         retrySoon = false
         publish()

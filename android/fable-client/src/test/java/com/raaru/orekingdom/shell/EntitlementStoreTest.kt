@@ -77,6 +77,30 @@ class EntitlementStoreTest {
     }
 
     @Test
+    fun duplicateChannelDtoIdsAreDedupedFirstWins() {
+        // P-5: a repeated id in the host payload must not reach the rail —
+        // ChannelRail keys rows channel:<id>, so a duplicate crashes the list.
+        val dupes = channels() + ch("ch_general", "THE FLOOR")
+        val s = started(FakeTransport(ent(listOf("ch_general")), dupes, vacant))
+        val ids = s.rail.value.categories.flatMap { it.channels }.map { it.id }
+        assertEquals(listOf("ch_general", "ch_help"), ids)
+
+        // Same on the push path: a lapsed push carrying a duplicate id.
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s2 = started(t)
+        t.channels = channels() + ch("ch_help", "THE FLOOR")
+        t.pushes.tryEmit(ent(listOf("ch_general", "ch_help")))
+        runBlocking {
+            withTimeout(5_000) {
+                s2.rail.first { r ->
+                    r.categories.flatMap { it.channels }.count { it.id == "ch_help" } == 1 &&
+                        r.categories[1].channels[1].composer == ComposerState.Enabled
+                }
+            }
+        }
+    }
+
+    @Test
     fun composerStatesFollowCapabilitiesNotRoleNames() {
         val s = started(FakeTransport(ent(listOf("ch_general")), channels(), vacant))
         val all = s.rail.value.categories.flatMap { it.channels }.associateBy { it.id }

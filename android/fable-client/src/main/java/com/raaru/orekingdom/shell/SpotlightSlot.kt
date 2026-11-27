@@ -114,7 +114,9 @@ private fun SpotlightOccupied(state: SpotlightUiState.Occupied, modifier: Modifi
         OreText(
             text = floorLine(state.floorUsd),
             style = OreTheme.type.caption,
-            color = OreTheme.color.text.tertiary,
+            // A11Y-04: this line sits on the spotlight container
+            // (ice900), where tertiary is 4.28 — under 4.5.
+            color = OreTheme.color.text.secondary,
             maxLines = 1,
         )
     }

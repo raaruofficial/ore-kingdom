@@ -177,7 +177,9 @@ fun ReportSheet(
             reasonWire == null -> OreText(
                 text = ReportCopy.CHOOSE_REASON,
                 style = OreTheme.type.caption,
-                color = OreTheme.color.text.tertiary,
+                // A11Y-04: this caption sits directly on the sheet's
+                // overlay background — tertiary is 4.26 there (under 4.5).
+                color = OreTheme.color.text.secondary,
             )
         }
         OrePrimaryButton(
@@ -224,5 +226,7 @@ fun ReportClosedNotice(
 
 @Composable
 private fun ReportOverline(text: String) {
-    OreText(text = text, style = OreTheme.type.overline, color = OreTheme.color.text.tertiary, maxLines = 1)
+    // A11Y-04: every call site sits on the sheet's overlay background,
+    // where tertiary is 4.26 (under 4.5); secondary is 7.56.
+    OreText(text = text, style = OreTheme.type.overline, color = OreTheme.color.text.secondary, maxLines = 1)
 }

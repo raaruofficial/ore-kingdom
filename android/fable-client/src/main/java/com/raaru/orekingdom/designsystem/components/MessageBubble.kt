@@ -135,7 +135,10 @@ fun MessageBubble(
                             OreText(
                                 text = OreComponentCopy.Edited,
                                 style = OreTheme.type.caption,
-                                color = colors.text.tertiary,
+                                // A11Y-04: tertiary is 4.27 on bubbleOwn
+                                // (own messages) — under 4.5. Secondary
+                                // passes on both bubble backgrounds.
+                                color = colors.text.secondary,
                             )
                         }
                         if (stale) StaleBadge()
