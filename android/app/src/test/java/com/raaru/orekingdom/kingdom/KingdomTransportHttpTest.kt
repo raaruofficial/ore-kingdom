@@ -1,5 +1,6 @@
 package com.raaru.orekingdom.kingdom
 
+import com.raaru.orekingdom.channel.HistoryPageRequest
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -9,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -94,5 +96,74 @@ class KingdomTransportHttpTest {
         assertEquals("GET", conn?.requestMethod)
         assertEquals("application/json", conn?.getRequestProperty("Accept"))
         assertEquals("application/json", conn?.getRequestProperty("Content-Type"))
+    }
+
+    @Test
+    fun historyUrlCarriesChannelAndLimitOnlyWithoutCursor() {
+        var seen: URL? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> seen = url; FakeConnection(url, 200, "{\"messages\":[],\"has_more\":false}", null) },
+        )
+
+        val read = runBlocking { t.getHistory(HistoryPageRequest("ch_general", null)) }
+
+        assertEquals("http://localhost/api/history?channel_id=ch_general&limit=50", seen.toString())
+        assertEquals(false, read.hasMore)
+        assertTrue(read.messages.isEmpty())
+    }
+
+    @Test
+    fun historyUrlPlacesBeforeSeqBetweenChannelAndLimit() {
+        var seen: URL? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> seen = url; FakeConnection(url, 200, "{\"messages\":[],\"has_more\":true}", null) },
+        )
+
+        val read = runBlocking { t.getHistory(HistoryPageRequest("ch_general", 42L)) }
+
+        assertEquals("http://localhost/api/history?channel_id=ch_general&before_seq=42&limit=50", seen.toString())
+        assertEquals(true, read.hasMore)
+    }
+
+    @Test
+    fun threadHistoryUrlCarriesChannelThreadAndLimit200() {
+        var seen: URL? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> seen = url; FakeConnection(url, 200, "{\"messages\":[]}", null) },
+        )
+
+        val messages = runBlocking { t.getThreadHistory("ch_general", "th_1") }
+
+        assertEquals("http://localhost/api/history?channel_id=ch_general&thread_id=th_1&limit=200", seen.toString())
+        assertTrue(messages.isEmpty())
+    }
+
+    @Test
+    fun searchQueryIsFormEncodedNeverRaw() {
+        var seen: URL? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> seen = url; FakeConnection(url, 200, "{\"messages\":[],\"threads\":[]}", null) },
+        )
+
+        runBlocking { t.getSearch("ore & more") }
+
+        assertEquals("http://localhost/api/search?q=ore+%26+more", seen.toString())
+    }
+
+    @Test
+    fun threadsChannelIdIsFormEncoded() {
+        var seen: URL? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> seen = url; FakeConnection(url, 200, "{\"threads\":[]}", null) },
+        )
+
+        runBlocking { t.getThreads("ch a&b") }
+
+        assertEquals("http://localhost/api/threads?channel_id=ch+a%26b", seen.toString())
     }
 }
