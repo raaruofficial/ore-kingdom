@@ -637,4 +637,169 @@ class KingdomSessionMessageTest {
         assertTrue(transport.sentFrames.all { it.contains("\"op\":\"add\"") })
         assertTrue(transport.sentFrames[2].contains("\"message_id\":\"m_missing\""))
     }
+
+    @Test
+    fun openChannelFetchesNewestPageWhenNothingCached() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+
+        assertEquals(1, transport.historyRequests.size)
+        assertEquals("ch_general", transport.historyRequests[0].channelId)
+        assertEquals(null, transport.historyRequests[0].beforeSeq)
+    }
+
+    @Test
+    fun openChannelClearsUnreadAndSelectsTheChannel() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+            channels = listOf(sessionChannel("ch_general"), sessionChannel("ch_pump")),
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+        )
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+        session.openChannel("ch_general")
+        emit(KingdomInbound.Message(sessionMessage("p1", "ch_pump", 1, "u_other")))
+
+        val before = session.store.rail.value.categories
+            .flatMap { it.channels }.first { it.id == "ch_pump" }
+        assertEquals(1, before.unreadCount)
+
+        session.openChannel("ch_pump")
+
+        val after = session.store.rail.value.categories
+            .flatMap { it.channels }.first { it.id == "ch_pump" }
+        assertEquals(0, after.unreadCount)
+        assertEquals("ch_pump", session.store.rail.value.lastVisitedChannelId)
+    }
+
+    @Test
+    fun openChannelWithCachedMessagesIssuesNoFetch() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        transport.historyRequests.clear()
+
+        session.openChannel("ch_general")
+
+        assertTrue(transport.historyRequests.isEmpty())
+    }
+
+    @Test
+    fun loadOlderWithNoCachedMessagesIsANoOp() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(sessionMember("u_self", "Self")),
+            channels = listOf(sessionChannel("ch_general")),
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+        )
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+
+        session.loadOlder("ch_general")
+
+        assertTrue(transport.historyRequests.isEmpty())
+    }
+
+    @Test
+    fun loadOlderIsANoOpWhenNoOlderPages() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        transport.historyRequests.clear()
+
+        session.loadOlder("ch_general")
+
+        assertTrue(transport.historyRequests.isEmpty())
+    }
+
+    @Test
+    fun loadOlderFetchesBeforeTheOldestCachedSeq() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+            channels = listOf(sessionChannel("ch_general")),
+            history = listOf(
+                sessionMessage("m9", "ch_general", 9, "u_other"),
+                sessionMessage("m5", "ch_general", 5, "u_other"),
+            ),
+        )
+        transport.historyHasMore = true
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+        session.openChannel("ch_general")
+        transport.historyRequests.clear()
+
+        session.loadOlder("ch_general")
+
+        assertEquals(1, transport.historyRequests.size)
+        assertEquals("ch_general", transport.historyRequests[0].channelId)
+        assertEquals(5L, transport.historyRequests[0].beforeSeq)
+    }
+
+    @Test
+    fun openChannelReissuesThePendingPlanRequest() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        transport.historyRequests.clear()
+        emit(KingdomInbound.Message(sessionMessage("m5", "ch_general", 5, "u_other")))
+
+        session.openChannel("ch_general")
+
+        assertTrue(
+            transport.historyRequests.any { it.channelId == "ch_general" && it.beforeSeq == 5L },
+        )
+    }
+
+    @Test
+    fun retryChannelDropsTheErrorStatusAndRefetches() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+            channels = listOf(sessionChannel("ch_general")),
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+        )
+        transport.historyError = KingdomHttpException(404, "missing")
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+        session.openChannel("ch_general")
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+        assertEquals(ChannelStatus.Error, session.channelState(rail, null).status)
+
+        transport.historyError = null
+        transport.historyRequests.clear()
+        session.retryChannel("ch_general")
+
+        assertEquals(1, transport.historyRequests.size)
+        assertEquals(null, transport.historyRequests[0].beforeSeq)
+        assertEquals(ChannelStatus.Ready, session.channelState(rail, null).status)
+        assertEquals(listOf("m1"), rows().map { it.id })
+    }
 }
