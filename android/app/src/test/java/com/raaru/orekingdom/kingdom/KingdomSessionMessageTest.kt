@@ -1,9 +1,16 @@
 package com.raaru.orekingdom.kingdom
 
 import com.raaru.orekingdom.channel.ChannelMessageUi
+import com.raaru.orekingdom.channel.ChannelOutbox
+import com.raaru.orekingdom.channel.ChannelStatus
+import com.raaru.orekingdom.channel.OutboxEnqueueResult
+import com.raaru.orekingdom.channel.PresenceUi
 import com.raaru.orekingdom.designsystem.components.ComposerState
+import com.raaru.orekingdom.designsystem.components.OreMessageDelivery
+import com.raaru.orekingdom.designsystem.components.OrePresence
 import com.raaru.orekingdom.designsystem.components.OreReaction
 import com.raaru.orekingdom.designsystem.components.OreRole
+import com.raaru.orekingdom.identity.ProfileStatus
 import com.raaru.orekingdom.shell.ChannelKind
 import com.raaru.orekingdom.shell.InMemoryLastVisitedStore
 import com.raaru.orekingdom.shell.RailChannel
@@ -153,5 +160,269 @@ class KingdomSessionMessageTest {
 
         emit(KingdomInbound.Reaction("ch_general", "m1", "🔥", 1, listOf("u_other")))
         assertEquals(listOf(OreReaction("🔥", 1, false)), rows().single().reactions)
+    }
+
+    @Test
+    fun profileStateUnknownIdIsErrorEchoingTheId() {
+        startWith(
+            history = emptyList(),
+            members = listOf(sessionMember("u_self", "Self")),
+        )
+
+        val state = session.profileState("u_nobody")
+
+        assertEquals(ProfileStatus.Error, state.status)
+        assertEquals("u_nobody", state.userId)
+    }
+
+    @Test
+    fun profileStateMemberIsReadyVerbatimAndSelfFlagged() {
+        startWith(
+            history = emptyList(),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other", role = "operator", founding = true, moderator = true),
+            ),
+        )
+
+        val other = session.profileState("u_other")
+        assertEquals(ProfileStatus.Ready, other.status)
+        assertEquals("u_other", other.userId)
+        assertEquals("Other", other.displayName)
+        assertEquals("operator", other.memberRole)
+        assertTrue(other.founding)
+        assertTrue(other.moderator)
+        assertFalse(other.isSelf)
+
+        val self = session.profileState("u_self")
+        assertEquals(ProfileStatus.Ready, self.status)
+        assertTrue(self.isSelf)
+    }
+
+    @Test
+    fun profileStateCopiesPresenceWhenKnown() {
+        startWith(
+            history = emptyList(),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        emit(KingdomInbound.Presence(PresenceUi("u_other", OrePresence.Idle, "mining", false)))
+
+        val state = session.profileState("u_other")
+
+        assertEquals(OrePresence.Idle, state.presence)
+        assertEquals("mining", state.activity)
+    }
+
+    @Test
+    fun profileStateHasNullPresenceWhenUnknown() {
+        startWith(
+            history = emptyList(),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+
+        val state = session.profileState("u_other")
+
+        assertEquals(null, state.presence)
+        assertEquals(null, state.activity)
+    }
+
+    @Test
+    fun channelRowsSortBySeqRegardlessOfInsertionOrder() {
+        startWith(
+            history = listOf(
+                sessionMessage("m3", "ch_general", 3, "u_other"),
+                sessionMessage("m1", "ch_general", 1, "u_other"),
+                sessionMessage("m2", "ch_general", 2, "u_self"),
+            ),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+
+        assertEquals(listOf(1L, 2L, 3L), rows().map { it.seq })
+        assertEquals(listOf("m1", "m2", "m3"), rows().map { it.id })
+    }
+
+    @Test
+    fun channelRowCarriesCommercialFlagAndReactionOrder() {
+        startWith(
+            history = listOf(
+                sessionMessage(
+                    "m1", "ch_general", 1, "u_other",
+                    reactions = listOf(ContractReaction("🔥", 2, false), ContractReaction("👍", 5, true)),
+                ).copy(commercial = true),
+            ),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+
+        val row = rows().single()
+
+        assertTrue(row.commercial)
+        assertEquals(listOf(OreReaction("🔥", 2, false), OreReaction("👍", 5, true)), row.reactions)
+    }
+
+    @Test
+    fun ackedEntryReintroducedByRestoreDoesNotRenderAsPending() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        session.sendController.submit("ch_general", "ghost body", online = false)
+        val key = session.outbox.forChannel("ch_general").single().idempotencyKey
+
+        emit(KingdomInbound.Ack(key, "m_ghost", 42))
+        assertTrue(session.outbox.forChannel("ch_general").isEmpty())
+
+        val scratch = ChannelOutbox(capacity = 100, persistence = null, keyFactory = { key })
+        scratch.enqueue("ch_general", "ghost body")
+        assertEquals(1, session.outbox.restore(scratch.serialize()))
+        assertTrue(session.outbox.forChannel("ch_general").any { it.idempotencyKey == key })
+
+        assertTrue(rows().none { it.localKey == key })
+        assertEquals(listOf("m1"), rows().map { it.id })
+    }
+
+    @Test
+    fun pendingRowRendersAfterCachedRowsWithDeliveryAndLocalKey() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+
+        val result = session.sendController.submit("ch_general", "held body", online = false)
+        assertTrue(result is OutboxEnqueueResult.Queued)
+        val key = session.outbox.forChannel("ch_general").single().idempotencyKey
+
+        val rows = rows()
+        assertEquals(2, rows.size)
+        assertEquals("m1", rows[0].id)
+        assertEquals(key, rows[1].localKey)
+        assertEquals(null, rows[1].seq)
+        assertEquals("held body", rows[1].body)
+        assertEquals(OreMessageDelivery.Queued, rows[1].delivery)
+        assertTrue(rows[1].own)
+    }
+
+    @Test
+    fun typistsExcludeSelfAndResolveNamesThroughDirectory() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        session.realtime.applyTypingStub("ch_general", "u_other", true, 1_000L)
+        session.realtime.applyTypingStub("ch_general", "u_ghost", true, 1_000L)
+        session.realtime.applyTypingStub("ch_general", "u_self", true, 1_000L)
+
+        val state = session.channelState(
+            RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled),
+            null,
+        )
+
+        assertEquals(setOf("Other", "u_ghost"), state.typists.toSet())
+    }
+
+    @Test
+    fun staleOnlyWhenDisconnectedWithCachedRows() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+
+        assertTrue(session.channelState(rail, null).stale)
+        transport.setConnected(true)
+        assertFalse(session.channelState(rail, null).stale)
+    }
+
+    @Test
+    fun staleIsFalseWhenNoCachedRows() {
+        startWith(
+            history = emptyList(),
+            members = listOf(sessionMember("u_self", "Self")),
+        )
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+
+        assertFalse(session.channelState(rail, null).stale)
+    }
+
+    @Test
+    fun statusIsLoadingWithNoRowsAndNoRecordedStatus() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(sessionMember("u_self", "Self")),
+            channels = listOf(sessionChannel("ch_general")),
+        )
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+
+        val state = session.channelState(
+            RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled),
+            null,
+        )
+
+        assertEquals(ChannelStatus.Loading, state.status)
+    }
+
+    @Test
+    fun statusIsReadyFromRowsWithoutRecordedStatus() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+            channels = listOf(sessionChannel("ch_general")),
+        )
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+        emit(KingdomInbound.Message(sessionMessage("m1", "ch_general", 1, "u_other")))
+
+        val state = session.channelState(
+            RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled),
+            null,
+        )
+
+        assertEquals(ChannelStatus.Ready, state.status)
+        assertEquals(listOf("m1"), state.messages.map { it.id })
+    }
+
+    @Test
+    fun reactionsEnabledFollowsTheReactEntitlement() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+        val withReact = sessionEntitlements().copy(
+            capabilities = sessionEntitlements().capabilities.copy(react = listOf("ch_general")),
+        )
+
+        assertTrue(session.channelState(rail, withReact).reactionsEnabled)
+        assertFalse(session.channelState(rail, sessionEntitlements()).reactionsEnabled)
+        assertFalse(session.channelState(rail, null).reactionsEnabled)
     }
 }

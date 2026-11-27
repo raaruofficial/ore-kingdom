@@ -39,11 +39,44 @@ internal class FakeSessionTransport(
     var searchError: Exception? = null,
 ) : KingdomSessionTransport {
 
+    /* Tranche-4 harness extension (supervisor-authored): configurable
+     * module/moderation reads, error arms, and call recording for the
+     * C-cluster pins. Every default reproduces the pre-extension fake
+     * exactly, so the Q-23…Q-25 tests are unaffected. */
+    var historyError: Exception? = null
+    var historyHasMore: Boolean = false
+    val historyRequests = CopyOnWriteArrayList<HistoryPageRequest>()
+    var threadHistory: List<ContractMessage> = emptyList()
+    var searchCalls: Int = 0
+    var pumpRead: PumpRead = PumpRead(emptyList(), 0, null, false, "locked")
+    var pumpError: Exception? = null
+    var nightshiftRead: NightshiftRead = NightshiftRead(null, emptyList())
+    var nightshiftError: Exception? = null
+    var intelRead: List<IntelItemRead> = emptyList()
+    var intelError: Exception? = null
+    var passesRead: PassesRead = PassesRead(false, null)
+    var passesError: Exception? = null
+    var crownRead: CrownRead = CrownRead(null, null)
+    var crownError: Exception? = null
+    var modQueueRead: List<ModQueueItemRead> = emptyList()
+    var modQueueError: Exception? = null
+    var modQueueCalls: Int = 0
+    var modLogRead: List<ModLogEntryRead> = emptyList()
+    var modLogError: Exception? = null
+    var modLogCalls: Int = 0
+    var sanctionsRead: List<SanctionRead> = emptyList()
+    var sanctionsError: Exception? = null
+
     val framesFlow = MutableSharedFlow<KingdomInbound>(extraBufferCapacity = 64)
     override val frames: Flow<KingdomInbound> = framesFlow
 
     private val _connected = MutableStateFlow(false)
     override val connected: StateFlow<Boolean> = _connected.asStateFlow()
+
+    /** Tranche-4 harness extension: lets a pin drive the connected arm. */
+    fun setConnected(value: Boolean) {
+        _connected.value = value
+    }
 
     private val _channelsSnapshot = MutableStateFlow(channels)
     override val channelsSnapshot: StateFlow<List<ChannelDto>> = _channelsSnapshot.asStateFlow()
@@ -76,8 +109,11 @@ internal class FakeSessionTransport(
 
     override suspend fun getMembers(): List<ContractMember> = members
 
-    override suspend fun getHistory(request: HistoryPageRequest): HistoryRead =
-        HistoryRead(history.filter { it.channelId == request.channelId }, hasMore = false)
+    override suspend fun getHistory(request: HistoryPageRequest): HistoryRead {
+        historyRequests += request
+        historyError?.let { throw it }
+        return HistoryRead(history.filter { it.channelId == request.channelId }, hasMore = historyHasMore)
+    }
 
     override suspend fun getThreads(channelId: String): List<ContractThread> {
         threadsError?.let { throw it }
@@ -85,28 +121,55 @@ internal class FakeSessionTransport(
     }
 
     override suspend fun getThreadHistory(channelId: String, threadId: String): List<ContractMessage> =
-        emptyList()
+        threadHistory.filter { it.channelId == channelId && it.threadId == threadId }
 
     override suspend fun getSearch(query: String): SearchRead {
+        searchCalls++
         searchError?.let { throw it }
         return searchRead
     }
 
-    override suspend fun getPump(): PumpRead = PumpRead(emptyList(), 0, null, false, "locked")
+    override suspend fun getPump(): PumpRead {
+        pumpError?.let { throw it }
+        return pumpRead
+    }
 
-    override suspend fun getNightshift(): NightshiftRead = NightshiftRead(null, emptyList())
+    override suspend fun getNightshift(): NightshiftRead {
+        nightshiftError?.let { throw it }
+        return nightshiftRead
+    }
 
-    override suspend fun getIntel(): List<IntelItemRead> = emptyList()
+    override suspend fun getIntel(): List<IntelItemRead> {
+        intelError?.let { throw it }
+        return intelRead
+    }
 
-    override suspend fun getPasses(): PassesRead = PassesRead(false, null)
+    override suspend fun getPasses(): PassesRead {
+        passesError?.let { throw it }
+        return passesRead
+    }
 
-    override suspend fun getCrown(): CrownRead = CrownRead(null, null)
+    override suspend fun getCrown(): CrownRead {
+        crownError?.let { throw it }
+        return crownRead
+    }
 
-    override suspend fun getModQueue(): List<ModQueueItemRead> = emptyList()
+    override suspend fun getModQueue(): List<ModQueueItemRead> {
+        modQueueCalls++
+        modQueueError?.let { throw it }
+        return modQueueRead
+    }
 
-    override suspend fun getModLog(): List<ModLogEntryRead> = emptyList()
+    override suspend fun getModLog(): List<ModLogEntryRead> {
+        modLogCalls++
+        modLogError?.let { throw it }
+        return modLogRead
+    }
 
-    override suspend fun getSanctions(): List<SanctionRead> = emptyList()
+    override suspend fun getSanctions(): List<SanctionRead> {
+        sanctionsError?.let { throw it }
+        return sanctionsRead
+    }
 
     override suspend fun submitReport(submission: ReportSubmission) = Unit
 
