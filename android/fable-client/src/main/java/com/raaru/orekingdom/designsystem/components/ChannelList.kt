@@ -89,7 +89,7 @@ fun ChannelRow(
         OreText(
             text = glyph,
             style = OreTheme.type.body,
-            color = colors.text.tertiary,
+            color = colors.text.secondary,
             maxLines = 1,
         )
         OreText(
@@ -103,7 +103,7 @@ fun ChannelRow(
             OreText(
                 text = note,
                 style = OreTheme.type.caption,
-                color = colors.text.tertiary,
+                color = colors.text.secondary,
                 maxLines = 1,
             )
         }
@@ -115,7 +115,7 @@ fun ChannelRow(
 fun UnreadBadge(count: Int) {
     Box(
         modifier = Modifier
-            .height(OreTheme.size.badgeHeight)
+            .heightIn(min = OreTheme.size.badgeHeight)
             .defaultMinSize(minWidth = OreTheme.size.badgeHeight)
             .clip(OreTheme.shape.pill)
             .background(OreTheme.color.accent.primary)
