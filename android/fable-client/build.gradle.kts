@@ -27,6 +27,16 @@ android {
     buildFeatures {
         compose = true
     }
+
+    lint {
+        // Session 9: AGP 8.7 lint's NonNullableMutableLiveDataDetector
+        // crashes with an IncompatibleClassChangeError on this source
+        // set (CI run 45942408896) before producing any report. The
+        // module uses no LiveData anywhere, so the detector has
+        // nothing to check here; disabling it lets lint complete.
+        disable += "NullSafeMutableLiveData"
+        textReport = true
+    }
 }
 
 dependencies {
