@@ -83,6 +83,13 @@ class WsTest {
     const masked = Buffer.from(payload.map((b, i) => b ^ mask[i % 4]));
     this.socket.write(Buffer.concat([header, mask, masked]));
   }
+  sendRaw(text) {
+    const payload = Buffer.from(text, "utf8");
+    const mask = crypto.randomBytes(4);
+    const header = Buffer.from([0x81, 0x80 | payload.length]);
+    const masked = Buffer.from(payload.map((b, i) => b ^ mask[i % 4]));
+    this.socket.write(Buffer.concat([header, mask, masked]));
+  }
   waitFor(pred, label, timeoutMs = 3000) {
     const existing = this.frames.find(pred);
     if (existing) return Promise.resolve(existing);
@@ -302,6 +309,178 @@ try {
   const threadsFinal = await get("/api/threads?channel_id=ch_strategy", "u_host");
   ok(threadsFinal.body.threads[0].reply_count === 4, "threads: idempotent retry does not double-count the reply");
   th.close(); tm.close();
+
+
+  // 15 — backend edges (DeepSeek programme item 3): slowmode shape + isolation,
+  // presence lifecycle, unsubscribe, edit/delete rights, malformed frames,
+  // idempotency collisions, resume replay boundary, lapse-push consistency.
+  // NOTE: the slowmode checks run first — they rely on u_host's ch_strategy
+  // window opened by section 14 still being live (< 30s elapsed).
+  const hS = await new WsTest().connect("u_host");
+  const stratBefore = await get("/api/history?channel_id=ch_strategy&limit=200", "u_host");
+  hS.send({ type: "send", id: "c_slow_shape", channel_id: "ch_strategy", payload: { body: "too soon" } });
+  const slowErr = await hS.waitFor((f) => f.type === "error" && f.payload.for_id === "c_slow_shape", "slowmode shape refusal");
+  const slowMatch = /^slowmode: wait (\d+)s$/.exec(slowErr.payload.message ?? "");
+  ok(slowErr.payload.code === "slowmode" && !!slowMatch && Number(slowMatch[1]) >= 1 && Number(slowMatch[1]) <= 30,
+    "slowmode edge: refusal names the remaining seconds (1..30)");
+  const stratAfter = await get("/api/history?channel_id=ch_strategy&limit=200", "u_host");
+  ok(stratAfter.body.messages.length === stratBefore.body.messages.length &&
+    !stratAfter.body.messages.some((m) => m.body === "too soon"),
+    "slowmode edge: a refused send writes no message");
+  hS.send({ type: "send", id: "c_slow_other_ch", channel_id: "ch_general", payload: { body: "general is fine" } });
+  await hS.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_slow_other_ch", "other-channel ack");
+  hS.send({ type: "send", id: "c_slow_other_ch2", channel_id: "ch_general", payload: { body: "general again" } });
+  await hS.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_slow_other_ch2", "other-channel ack 2");
+  ok(true, "slowmode edge: the window is per-channel — ch_general sends are unaffected");
+
+  // presence lifecycle: connect promotes, invisible is carried, last socket out goes offline
+  // Section 4's aBad socket is still open and would hold u_free "connected"
+  // (and already promoted) — close it first so the lifecycle below is real.
+  aBad.close();
+  await new Promise((r) => setTimeout(r, 150));
+  const po = await new WsTest().connect("u_host");
+  po.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  // The snapshot is one frame per user and they can arrive in separate
+  // chunks — wait until all five users are represented before counting.
+  const snapDeadline = Date.now() + 3000;
+  const snapUsers = () => new Set(po.frames.filter((f) => f.type === "presence").map((f) => f.payload.presence.user_id));
+  while (snapUsers().size < 5 && Date.now() < snapDeadline) await new Promise((r) => setTimeout(r, 25));
+  ok(snapUsers().size === 5, "presence edge: subscribe snapshot covers every user");
+  const freeOffline = (f) => f.type === "presence" && f.payload.presence.user_id === "u_free" && f.payload.presence.state === "offline";
+  const freeOnline = (f) => f.type === "presence" && f.payload.presence.user_id === "u_free" && f.payload.presence.state === "online";
+  const offlineBase = po.count(freeOffline);
+  const ps1 = await new WsTest().connect("u_free");
+  await po.waitFor((f) => freeOnline(f) && f.payload.presence.invisible === false, "u_free promoted online");
+  ok(true, "presence edge: connecting promotes an offline user to online for observers");
+  ps1.send({ type: "presence.set", payload: { invisible: true } });
+  const inv = await po.waitFor((f) => freeOnline(f) && f.payload.presence.invisible === true, "u_free invisible");
+  ok(inv.payload.presence.state === "online", "presence edge: invisible is a flag on the shape, state stays as set");
+  const ps2 = await new WsTest().connect("u_free");
+  ps1.close();
+  await new Promise((r) => setTimeout(r, 250));
+  ok(po.count(freeOffline) === offlineBase, "presence edge: closing one of two sockets keeps the user online");
+  ps2.close();
+  const offDeadline = Date.now() + 3000;
+  while (po.count(freeOffline) < offlineBase + 1 && Date.now() < offDeadline) await new Promise((r) => setTimeout(r, 25));
+  ok(po.count(freeOffline) === offlineBase + 1, "presence edge: last socket out broadcasts offline");
+  po.close();
+
+  // unsubscribe stops delivery; resubscribe restores it
+  const sub = await new WsTest().connect("u_mod");
+  sub.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await sub.waitFor((f) => f.type === "presence", "unsub observer snapshot");
+  const pub = await new WsTest().connect("u_op");
+  pub.send({ type: "send", id: "c_unsub_1", channel_id: "ch_general", payload: { body: "unsub one" } });
+  await sub.waitFor((f) => f.type === "message" && f.payload.message.body === "unsub one", "first delivery");
+  sub.send({ type: "unsubscribe", payload: { channel_ids: ["ch_general"] } });
+  await new Promise((r) => setTimeout(r, 100));
+  pub.send({ type: "send", id: "c_unsub_2", channel_id: "ch_general", payload: { body: "unsub two" } });
+  await pub.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_unsub_2", "second send ack");
+  await new Promise((r) => setTimeout(r, 250));
+  ok(sub.count((f) => f.type === "message" && f.payload.message.body === "unsub two") === 0,
+    "unsubscribe edge: no delivery after unsubscribe");
+  sub.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await new Promise((r) => setTimeout(r, 100));
+  pub.send({ type: "send", id: "c_unsub_3", channel_id: "ch_general", payload: { body: "unsub three" } });
+  await sub.waitFor((f) => f.type === "message" && f.payload.message.body === "unsub three", "delivery after resubscribe");
+  ok(true, "unsubscribe edge: resubscribe restores delivery");
+
+  // edit/delete rights: author edits, others cannot, a moderator deletes
+  const author = await new WsTest().connect("u_host");
+  author.send({ type: "send", id: "c_edit_1", channel_id: "ch_general", payload: { body: "edit target" } });
+  const editAck = await author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_edit_1", "edit target ack");
+  const targetId = editAck.payload.message_id;
+  pub.send({ type: "edit", channel_id: "ch_general", payload: { message_id: targetId, body: "hijacked" } });
+  const editDeny = await pub.waitFor((f) => f.type === "error" && f.payload.code === "not_entitled", "edit denial");
+  ok(!!editDeny, "edit edge: a non-author cannot edit");
+  pub.send({ type: "delete", channel_id: "ch_general", payload: { message_id: targetId } });
+  const delDeny = await pub.waitFor((f) => f.type === "error" && f.payload.code === "not_entitled" && f !== editDeny, "delete denial");
+  ok(!!delDeny, "delete edge: a non-author non-moderator cannot delete");
+  author.send({ type: "edit", channel_id: "ch_general", payload: { message_id: targetId, body: "edited body" } });
+  const upd = await sub.waitFor((f) => f.type === "message.update" && f.payload.message.id === targetId, "edit broadcast");
+  ok(upd.payload.message.body === "edited body" && upd.payload.message.edited_at !== null,
+    "edit edge: author edit broadcasts message.update with edited_at");
+  sub.send({ type: "delete", channel_id: "ch_general", payload: { message_id: targetId } });
+  const del = await sub.waitFor((f) => f.type === "message.delete" && f.payload.message_id === targetId, "mod delete broadcast");
+  ok(del.payload.seq === editAck.payload.seq, "delete edge: moderator delete broadcasts the tombstone frame");
+  const histAfterDelete = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  ok(histAfterDelete.body.messages.find((m) => m.id === targetId)?.deleted_at !== null,
+    "delete edge: history shows the tombstone");
+  author.close();
+
+  // malformed + unknown frames never kill the socket
+  const mal = await new WsTest().connect("u_host");
+  mal.sendRaw("{not json");
+  mal.send({ type: "bogus", payload: {} });
+  mal.send({ type: "send", id: "c_malformed_1", channel_id: "ch_general", payload: { body: "still alive" } });
+  const malAck = await mal.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_malformed_1", "post-malformed ack");
+  ok(!!malAck, "malformed edge: socket survives non-JSON and unknown-type frames");
+  mal.close();
+
+  // idempotency collisions: same key + different body keeps the original; new key + same body is new
+  hS.send({ type: "send", id: "c_dup_1", channel_id: "ch_general", payload: { body: "original body" } });
+  const dupAck1 = await hS.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_dup_1", "dup ack 1");
+  hS.send({ type: "send", id: "c_dup_1", channel_id: "ch_general", payload: { body: "changed body" } });
+  const dupAck2 = await hS.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_dup_1" && f !== dupAck1, "dup ack 2");
+  ok(dupAck2.payload.message_id === dupAck1.payload.message_id, "idempotency edge: same key + different body returns the original message");
+  const dupHist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  ok(dupHist.body.messages.filter((m) => m.id === dupAck1.payload.message_id).length === 1 &&
+    !dupHist.body.messages.some((m) => m.body === "changed body"),
+    "idempotency edge: the colliding body never lands");
+  hS.send({ type: "send", id: "c_dup_2", channel_id: "ch_general", payload: { body: "original body" } });
+  const dupAck3 = await hS.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_dup_2", "dup ack 3");
+  ok(dupAck3.payload.message_id !== dupAck1.payload.message_id, "idempotency edge: same body + new key is a new message");
+  hS.close();
+
+  // send does not require a subscription on the socket
+  const noSub = await new WsTest().connect("u_mod");
+  noSub.send({ type: "send", id: "c_nosub_1", channel_id: "ch_general", payload: { body: "no sub send" } });
+  const noSubAck = await noSub.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_nosub_1", "no-sub ack");
+  ok(!!noSubAck, "send edge: an entitled send succeeds without subscribing first");
+  noSub.close();
+
+  // resume boundary: a gap of 501 resyncs; a gap of exactly 500 replays in full
+  const bulk = await new WsTest().connect("u_op");
+  for (let i = 1; i <= 501; i++) {
+    const id = `c_bulk_${i}`;
+    bulk.send({ type: "send", id, channel_id: "ch_help_desk", payload: { body: `bulk ${i}` } });
+    await bulk.waitFor((f) => f.type === "ack" && f.payload.for_id === id, `bulk ack ${i}`);
+  }
+  const rBehind = await new WsTest().connect("u_op");
+  rBehind.send({ type: "resume", payload: { last_seq: { ch_help_desk: 0 } } });
+  const resync = await rBehind.waitFor((f) => f.type === "resync" && f.payload.channel_id === "ch_help_desk", "behind resync");
+  ok(resync.payload.reason === "behind", "resume edge: a gap of 501 answers resync/behind");
+  rBehind.close();
+  const rEdge = await new WsTest().connect("u_op");
+  rEdge.send({ type: "resume", payload: { last_seq: { ch_help_desk: 1 } } });
+  const replayDeadline = Date.now() + 8000;
+  const replayed = () => rEdge.frames.filter((f) => f.type === "message" && f.channel_id === "ch_help_desk");
+  while (replayed().length < 500 && Date.now() < replayDeadline) await new Promise((r) => setTimeout(r, 25));
+  ok(replayed().length === 500 && rEdge.count((f) => f.type === "resync") === 0,
+    "resume edge: a gap of exactly 500 replays in full, no resync");
+  ok(replayed()[0]?.payload.message.seq === 2 && replayed()[499]?.payload.message.seq === 501,
+    "resume edge: replay covers seq 2..501 in order");
+  rEdge.close();
+  bulk.close();
+
+  // lapse push consistency: the pushed channel list equals the REST read, both ways
+  const lp = await new WsTest().connect("u_op");
+  lp.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await lp.waitFor((f) => f.type === "presence", "lapse-push observer ready");
+  await post("/api/dev/lapse", { user_id: "u_op" }, "u_op");
+  const lapsePush = await lp.waitFor((f) => f.type === "role.update", "u_op lapse push");
+  const lapsedRest = await get("/api/channels", "u_op");
+  ok(lapsePush.payload.entitlements.role === "free" &&
+    lapsePush.payload.channels.map((c) => c.id).sort().join(",") === lapsedRest.body.channels.map((c) => c.id).sort().join(","),
+    "SW2-03 edge: lapse push channel set equals the REST channel read");
+  await post("/api/dev/restore", { user_id: "u_op" }, "u_op");
+  const restorePush = await lp.waitFor((f) => f.type === "role.update" && f.payload.entitlements.role === "operator", "u_op restore push");
+  const restoredRest = await get("/api/channels", "u_op");
+  ok(restorePush.payload.channels.map((c) => c.id).sort().join(",") === restoredRest.body.channels.map((c) => c.id).sort().join(","),
+    "SW2-03 edge: restore push channel set equals the REST channel read");
+  lp.close();
+  sub.close();
+  pub.close();
 
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {

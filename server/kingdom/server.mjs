@@ -750,6 +750,11 @@ server.on("upgrade", (req, socket, head) => {
   };
   socket.on("close", onGone);
   socket.on("error", onGone);
+  // HTTP upgrade sockets are allowHalfOpen: a peer that drops TCP
+  // without a WS close frame emits "end" here but never "close", so
+  // without this the socket wrapper (and its presence) leaks forever.
+  // Complete the close; onGone is delete-guarded and idempotent.
+  socket.on("end", () => { socket.end(); onGone(); });
   if (head && head.length) parser.push(head);
 });
 
