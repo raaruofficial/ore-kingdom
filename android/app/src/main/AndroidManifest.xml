@@ -23,5 +23,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Discord-framework client host (INTEGRATION_MAP §5). Not a
+             launcher: MainActivity remains the entry point of record
+             for the sealed build; this activity is started explicitly. -->
+        <activity
+            android:name=".kingdom.KingdomActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>
