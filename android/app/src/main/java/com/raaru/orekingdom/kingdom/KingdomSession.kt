@@ -11,6 +11,7 @@ import com.raaru.orekingdom.channel.FileOutboxPersistence
 import com.raaru.orekingdom.channel.HistoryPageRequest
 import com.raaru.orekingdom.channel.MessageDecision
 import com.raaru.orekingdom.channel.OutboxEntry
+import com.raaru.orekingdom.channel.OutboxPersistence
 import com.raaru.orekingdom.channel.RealtimeOutbound
 import com.raaru.orekingdom.channel.SearchMessageHitUi
 import com.raaru.orekingdom.channel.SearchStatus
@@ -60,6 +61,7 @@ import com.raaru.orekingdom.passes.PassScreenUi
 import com.raaru.orekingdom.passes.PassStatus
 import com.raaru.orekingdom.shell.EntitlementStore
 import com.raaru.orekingdom.shell.Entitlements
+import com.raaru.orekingdom.shell.LastVisitedStore
 import com.raaru.orekingdom.shell.RailChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -113,14 +115,32 @@ object SlowmodeMath {
  * further here.
  */
 class KingdomSession(
-    val transport: KingdomTransport,
+    val transport: KingdomSessionTransport,
     private val scope: CoroutineScope,
-    context: Context,
+    lastVisitedStore: LastVisitedStore,
+    outboxPersistence: OutboxPersistence,
 ) {
-    val store: EntitlementStore = EntitlementStore(transport, scope, PrefsLastVisitedStore(context))
+    /**
+     * S-SEAM-2: production wiring — the [LastVisitedStore] is the
+     * SharedPreferences-backed store and the outbox persists to the
+     * app-private file, exactly as before the seam. Tests use the
+     * primary constructor with in-memory seams and no Context.
+     */
+    constructor(
+        transport: KingdomSessionTransport,
+        scope: CoroutineScope,
+        context: Context,
+    ) : this(
+        transport,
+        scope,
+        PrefsLastVisitedStore(context),
+        FileOutboxPersistence(File(context.filesDir, "kingdom-outbox.txt")),
+    )
+
+    val store: EntitlementStore = EntitlementStore(transport, scope, lastVisitedStore)
     val realtime: ChannelRealtime = ChannelRealtime()
     val outbox: ChannelOutbox = ChannelOutbox(
-        persistence = FileOutboxPersistence(File(context.filesDir, "kingdom-outbox.txt")),
+        persistence = outboxPersistence,
     )
 
     /** The one send controller for the session; every channel composer shares it (it is channel-agnostic). */

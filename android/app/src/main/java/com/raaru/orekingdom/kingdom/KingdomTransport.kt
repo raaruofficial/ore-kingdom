@@ -95,6 +95,51 @@ data class HistoryRead(val messages: List<ContractMessage>, val hasMore: Boolean
 data class SearchRead(val messages: List<ContractMessage>, val threads: List<ContractThread>)
 
 /**
+ * S-SEAM-2: the transport surface [KingdomSession] consumes (and the
+ * screens read through `session.transport`): the [ShellTransport] shell
+ * seam plus the frame flows, the connection lifecycle, and every REST
+ * read/action beyond the shell. [KingdomTransport] is the production
+ * implementation; tests drive the session against a fake (Q-23…Q-25).
+ */
+interface KingdomSessionTransport : ShellTransport {
+    /** Decoded inbound frames (connection events, messages, acks, presence, resyncs, errors). */
+    val frames: Flow<KingdomInbound>
+
+    /** True while the WSS connection is open. */
+    val connected: StateFlow<Boolean>
+
+    /** The most recent channel list this transport fetched (DTOs, incl. slowmode + kinds). */
+    val channelsSnapshot: StateFlow<List<ChannelDto>>
+
+    /** Starts the reconnect loop (jittered backoff, 1s → 30s cap, per INTEGRATION_MAP §3.3). */
+    fun start(scope: CoroutineScope)
+
+    /** Writes one raw frame; false when the socket is down (callers treat sends as retryable). */
+    fun sendRaw(frame: String): Boolean
+
+    suspend fun getMe(): Pair<String, ContractMember>
+    suspend fun getMembers(): List<ContractMember>
+    suspend fun getHistory(request: HistoryPageRequest): HistoryRead
+    suspend fun getThreads(channelId: String): List<ContractThread>
+    suspend fun getThreadHistory(channelId: String, threadId: String): List<ContractMessage>
+    suspend fun getSearch(query: String): SearchRead
+    suspend fun getPump(): PumpRead
+    suspend fun getNightshift(): NightshiftRead
+    suspend fun getIntel(): List<IntelItemRead>
+    suspend fun getPasses(): PassesRead
+    suspend fun getCrown(): CrownRead
+    suspend fun getModQueue(): List<ModQueueItemRead>
+    suspend fun getModLog(): List<ModLogEntryRead>
+    suspend fun getSanctions(): List<SanctionRead>
+    suspend fun submitReport(submission: ReportSubmission)
+    suspend fun submitAppeal(appeal: AppealSubmission)
+    suspend fun modClaim(reportId: String)
+    suspend fun modAction(request: ModActionRequest)
+    suspend fun modDecideAppeal(decision: ModAppealDecision)
+    suspend fun nightshiftSuggestion(suggestionId: String, accept: Boolean)
+}
+
+/**
  * The host transport behind every client seam (INTEGRATION_MAP §3):
  * REST reads/writes over HttpURLConnection (the :app convention, see
  * HostApi) plus the single WSS connection the contract requires.
@@ -115,20 +160,20 @@ class KingdomTransport(
     /** S-SEAM-1: how a connection is opened for a URL. Production behaviour is
      * the platform default; tests inject a fake connection (Q-26). */
     private val connectionFactory: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
-) : ShellTransport {
+) : KingdomSessionTransport {
 
     private val _entitlementPushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 64)
     override val entitlementPushes: Flow<EntitlementPush> = _entitlementPushes.asSharedFlow()
 
     private val _frames = MutableSharedFlow<KingdomInbound>(extraBufferCapacity = 512)
-    val frames: Flow<KingdomInbound> = _frames.asSharedFlow()
+    override val frames: Flow<KingdomInbound> = _frames.asSharedFlow()
 
     private val _connected = MutableStateFlow(false)
-    val connected: StateFlow<Boolean> = _connected.asStateFlow()
+    override val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
     /** The most recent channel list this transport fetched (DTOs, incl. slowmode + kinds). */
     private val _channelsSnapshot = MutableStateFlow<List<ChannelDto>>(emptyList())
-    val channelsSnapshot: StateFlow<List<ChannelDto>> = _channelsSnapshot.asStateFlow()
+    override val channelsSnapshot: StateFlow<List<ChannelDto>> = _channelsSnapshot.asStateFlow()
 
     @Volatile private var wsClient: WsClient? = null
 
@@ -153,7 +198,7 @@ class KingdomTransport(
     /* ---- Connection management ---- */
 
     /** Starts the reconnect loop (jittered backoff, 1s → 30s cap, per INTEGRATION_MAP §3.3). */
-    fun start(scope: CoroutineScope) {
+    override fun start(scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             var backoffMs = 1_000L
             while (isActive) {
@@ -186,7 +231,7 @@ class KingdomTransport(
     }
 
     /** Writes one raw frame; false when the socket is down (callers treat sends as retryable). */
-    fun sendRaw(frame: String): Boolean = wsClient?.send(frame) ?: false
+    override fun sendRaw(frame: String): Boolean = wsClient?.send(frame) ?: false
 
     internal fun dispatch(text: String) {
         val envelope = try {
@@ -269,17 +314,17 @@ class KingdomTransport(
 
     /* ---- REST reads beyond the shell ---- */
 
-    suspend fun getMe(): Pair<String, ContractMember> {
+    override suspend fun getMe(): Pair<String, ContractMember> {
         val json = getJson("/api/me")
         return json.getString("user_id") to KingdomJson.parseMember(json.getJSONObject("member"))
     }
 
-    suspend fun getMembers(): List<ContractMember> =
+    override suspend fun getMembers(): List<ContractMember> =
         getJson("/api/members").getJSONArray("members").let { array ->
             (0 until array.length()).map { KingdomJson.parseMember(array.getJSONObject(it)) }
         }
 
-    suspend fun getHistory(request: HistoryPageRequest): HistoryRead {
+    override suspend fun getHistory(request: HistoryPageRequest): HistoryRead {
         val query = buildString {
             append("channel_id=").append(URLEncoder.encode(request.channelId, "UTF-8"))
             if (request.beforeSeq != null) append("&before_seq=").append(request.beforeSeq)
@@ -295,14 +340,14 @@ class KingdomTransport(
     }
 
     /** Thread list for one channel (server thread reads; 404 surfaces as a failed read). */
-    suspend fun getThreads(channelId: String): List<ContractThread> =
+    override suspend fun getThreads(channelId: String): List<ContractThread> =
         getJson("/api/threads?channel_id=" + URLEncoder.encode(channelId, "UTF-8"))
             .getJSONArray("threads").let { array ->
                 (0 until array.length()).map { KingdomJson.parseThread(array.getJSONObject(it)) }
             }
 
     /** One thread's messages via the history read's thread_id filter. */
-    suspend fun getThreadHistory(channelId: String, threadId: String): List<ContractMessage> {
+    override suspend fun getThreadHistory(channelId: String, threadId: String): List<ContractMessage> {
         val query = "channel_id=" + URLEncoder.encode(channelId, "UTF-8") +
             "&thread_id=" + URLEncoder.encode(threadId, "UTF-8") + "&limit=200"
         return getJson("/api/history?$query").getJSONArray("messages").let { array ->
@@ -311,7 +356,7 @@ class KingdomTransport(
     }
 
     /** CONTRACT.md §7 search read: entitlement-filtered messages + threads. */
-    suspend fun getSearch(query: String): SearchRead {
+    override suspend fun getSearch(query: String): SearchRead {
         val json = getJson("/api/search?q=" + URLEncoder.encode(query, "UTF-8"))
         return SearchRead(
             messages = json.getJSONArray("messages").let { array ->
@@ -323,7 +368,7 @@ class KingdomTransport(
         )
     }
 
-    suspend fun getPump(): PumpRead {
+    override suspend fun getPump(): PumpRead {
         val json = getJson("/api/modules/pump")
         val bank = json.getJSONObject("day_bank")
         return PumpRead(
@@ -340,7 +385,7 @@ class KingdomTransport(
         )
     }
 
-    suspend fun getNightshift(): NightshiftRead {
+    override suspend fun getNightshift(): NightshiftRead {
         val json = getJson("/api/modules/nightshift")
         val fleet = if (json.isNull("fleet")) null else json.getJSONObject("fleet").let { f ->
             NightshiftFleetRead(
@@ -364,7 +409,7 @@ class KingdomTransport(
         )
     }
 
-    suspend fun getIntel(): List<IntelItemRead> =
+    override suspend fun getIntel(): List<IntelItemRead> =
         getJson("/api/intel").getJSONArray("items").let { array ->
             (0 until array.length()).map {
                 val item = array.getJSONObject(it)
@@ -372,7 +417,7 @@ class KingdomTransport(
             }
         }
 
-    suspend fun getPasses(): PassesRead {
+    override suspend fun getPasses(): PassesRead {
         val json = getJson("/api/passes")
         return PassesRead(
             lifetimeHolder = json.getBoolean("lifetime_holder"),
@@ -380,17 +425,17 @@ class KingdomTransport(
         )
     }
 
-    suspend fun getCrown(): CrownRead {
+    override suspend fun getCrown(): CrownRead {
         val json = getJson("/api/crown")
         return CrownRead(json.optStringOrNull("holder_name"), json.optStringOrNull("month"))
     }
 
-    suspend fun getModQueue(): List<ModQueueItemRead> =
+    override suspend fun getModQueue(): List<ModQueueItemRead> =
         getJson("/api/mod/queue").getJSONArray("items").let { array ->
             (0 until array.length()).map { parseModQueueItem(array.getJSONObject(it)) }
         }
 
-    suspend fun getModLog(): List<ModLogEntryRead> =
+    override suspend fun getModLog(): List<ModLogEntryRead> =
         getJson("/api/mod/log").getJSONArray("entries").let { array ->
             (0 until array.length()).map {
                 val e = array.getJSONObject(it)
@@ -398,7 +443,7 @@ class KingdomTransport(
             }
         }
 
-    suspend fun getSanctions(): List<SanctionRead> =
+    override suspend fun getSanctions(): List<SanctionRead> =
         getJson("/api/sanctions").getJSONArray("sanctions").let { array ->
             (0 until array.length()).map {
                 val s = array.getJSONObject(it)
@@ -444,7 +489,7 @@ class KingdomTransport(
 
     /* ---- REST actions (no payment/signing shapes exist, per CONTRACT.md §8) ---- */
 
-    suspend fun submitReport(submission: ReportSubmission) {
+    override suspend fun submitReport(submission: ReportSubmission) {
         postJson(
             "/api/reports",
             JSONObject()
@@ -455,18 +500,18 @@ class KingdomTransport(
         )
     }
 
-    suspend fun submitAppeal(appeal: AppealSubmission) {
+    override suspend fun submitAppeal(appeal: AppealSubmission) {
         postJson(
             "/api/appeals",
             JSONObject().put("sanction_id", appeal.sanctionId).put("statement", appeal.statement),
         )
     }
 
-    suspend fun modClaim(reportId: String) {
+    override suspend fun modClaim(reportId: String) {
         postJson("/api/mod/claim", JSONObject().put("report_id", reportId))
     }
 
-    suspend fun modAction(request: ModActionRequest) {
+    override suspend fun modAction(request: ModActionRequest) {
         val body = JSONObject()
             .put("report_id", request.reportId)
             .put("action", request.action)
@@ -477,7 +522,7 @@ class KingdomTransport(
         postJson("/api/mod/action", body)
     }
 
-    suspend fun modDecideAppeal(decision: ModAppealDecision) {
+    override suspend fun modDecideAppeal(decision: ModAppealDecision) {
         postJson(
             "/api/mod/appeal",
             JSONObject()
@@ -489,7 +534,7 @@ class KingdomTransport(
         )
     }
 
-    suspend fun nightshiftSuggestion(suggestionId: String, accept: Boolean) {
+    override suspend fun nightshiftSuggestion(suggestionId: String, accept: Boolean) {
         postJson(
             "/api/modules/nightshift/suggestions",
             JSONObject().put("suggestion_id", suggestionId).put("accept", accept),
