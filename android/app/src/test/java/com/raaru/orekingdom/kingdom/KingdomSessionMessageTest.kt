@@ -425,4 +425,94 @@ class KingdomSessionMessageTest {
         assertFalse(session.channelState(rail, sessionEntitlements()).reactionsEnabled)
         assertFalse(session.channelState(rail, null).reactionsEnabled)
     }
+
+    @Test
+    fun effectiveComposerReturnsNonEnabledBaseUntouched() {
+        startWith(
+            history = emptyList(),
+            members = listOf(sessionMember("u_self", "Self")),
+        )
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Disabled("nope"))
+
+        assertEquals(ComposerState.Disabled("nope"), session.effectiveComposer(rail, 1_000L))
+    }
+
+    @Test
+    fun effectiveComposerReturnsBaseWhenChannelAbsentFromSnapshot() {
+        startWith(
+            history = emptyList(),
+            members = listOf(sessionMember("u_self", "Self")),
+        )
+        val rail = RailChannel("ch_absent", "absent", ChannelKind.Text, 0, ComposerState.Enabled)
+
+        assertEquals(ComposerState.Enabled, session.effectiveComposer(rail, 1_000L))
+    }
+
+    @Test
+    fun effectiveComposerReturnsBaseWhenSlowmodeIsZero() {
+        startWith(
+            history = emptyList(),
+            members = listOf(sessionMember("u_self", "Self")),
+        )
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+
+        assertEquals(ComposerState.Enabled, session.effectiveComposer(rail, 1_000L))
+    }
+
+    @Test
+    fun effectiveComposerReturnsBaseWhenNoAckRecorded() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(sessionMember("u_self", "Self")),
+            channels = listOf(sessionChannel("ch_general").copy(slowmodeSec = 30)),
+            history = emptyList(),
+        )
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+
+        assertEquals(ComposerState.Enabled, session.effectiveComposer(rail, 1_000L))
+    }
+
+    @Test
+    fun effectiveComposerYieldsSlowmodeInsideTheWindow() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(sessionMember("u_self", "Self")),
+            channels = listOf(sessionChannel("ch_general").copy(slowmodeSec = 30)),
+            history = emptyList(),
+        )
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+        session.openChannel("ch_general")
+        session.sendController.submit("ch_general", "timed body", online = false)
+        val key = session.outbox.forChannel("ch_general").single().idempotencyKey
+
+        val ackAtMs = System.currentTimeMillis()
+        emit(KingdomInbound.Ack(key, "m_timed", 7))
+
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+        assertEquals(ComposerState.Slowmode(30), session.effectiveComposer(rail, ackAtMs))
+    }
+
+    @Test
+    fun effectiveComposerReturnsBaseAfterTheWindowExpires() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(sessionMember("u_self", "Self")),
+            channels = listOf(sessionChannel("ch_general").copy(slowmodeSec = 30)),
+            history = emptyList(),
+        )
+        session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
+        session.start()
+        session.openChannel("ch_general")
+        session.sendController.submit("ch_general", "timed body", online = false)
+        val key = session.outbox.forChannel("ch_general").single().idempotencyKey
+
+        val ackAtMs = System.currentTimeMillis()
+        emit(KingdomInbound.Ack(key, "m_timed", 7))
+
+        val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
+        assertEquals(ComposerState.Enabled, session.effectiveComposer(rail, ackAtMs + 31_000L))
+    }
 }
