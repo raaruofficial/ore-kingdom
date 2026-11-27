@@ -757,7 +757,7 @@ class KingdomSessionMessageTest {
     }
 
     @Test
-    fun openChannelReissuesThePendingPlanRequest() {
+    fun messagePathExecutesThePendingPlanRequest() {
         startWith(
             history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
             members = listOf(
@@ -767,9 +767,6 @@ class KingdomSessionMessageTest {
         )
         transport.historyRequests.clear()
         emit(KingdomInbound.Message(sessionMessage("m600", "ch_general", 600, "u_other")))
-        assertTrue(transport.historyRequests.isEmpty())
-
-        session.openChannel("ch_general")
 
         assertEquals(1, transport.historyRequests.size)
         assertEquals("ch_general", transport.historyRequests[0].channelId)

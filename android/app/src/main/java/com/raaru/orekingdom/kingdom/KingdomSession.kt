@@ -261,10 +261,13 @@ class KingdomSession(
             }
             is KingdomInbound.Message -> {
                 val message = inbound.message
-                when (realtime.onMessage(message.channelId, message.seq)) {
-                    is MessageDecision.Accept -> insert(message)
+                when (val decision = realtime.onMessage(message.channelId, message.seq)) {
+                    is MessageDecision.Accept -> {
+                        insert(message)
+                        execute(decision.outbound)
+                    }
                     MessageDecision.Duplicate -> insertIfAbsent(message)
-                    is MessageDecision.Deferred -> Unit // replay/history delivers it in order
+                    is MessageDecision.Deferred -> execute(decision.outbound)
                     MessageDecision.Ignore -> Unit
                 }
                 if (message.channelId != openChannelId && message.authorId != selfId) {
