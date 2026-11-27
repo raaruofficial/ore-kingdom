@@ -591,4 +591,50 @@ class KingdomSessionMessageTest {
 
         assertEquals(listOf("r1"), result.replies.map { it.id })
     }
+
+    @Test
+    fun toggleReactionRemovesWhenMineIsTrue() {
+        startWith(
+            history = listOf(
+                sessionMessage(
+                    "m1", "ch_general", 1, "u_other",
+                    reactions = listOf(ContractReaction("🔥", 2, true)),
+                ),
+            ),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+
+        session.toggleReaction("ch_general", "m1", "🔥")
+
+        val frame = transport.sentFrames.single()
+        assertTrue(frame.contains("\"op\":\"remove\""))
+        assertTrue(frame.contains("\"message_id\":\"m1\""))
+    }
+
+    @Test
+    fun toggleReactionAddsWhenNotMineAbsentOrMessageMissing() {
+        startWith(
+            history = listOf(
+                sessionMessage(
+                    "m1", "ch_general", 1, "u_other",
+                    reactions = listOf(ContractReaction("🔥", 2, false)),
+                ),
+            ),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+
+        session.toggleReaction("ch_general", "m1", "🔥")
+        session.toggleReaction("ch_general", "m1", "👍")
+        session.toggleReaction("ch_general", "m_missing", "🔥")
+
+        assertEquals(3, transport.sentFrames.size)
+        assertTrue(transport.sentFrames.all { it.contains("\"op\":\"add\"") })
+        assertTrue(transport.sentFrames[2].contains("\"message_id\":\"m_missing\""))
+    }
 }
