@@ -1,6 +1,7 @@
 package com.raaru.orekingdom.kingdom
 
 import com.raaru.orekingdom.channel.ChannelMessageUi
+import com.raaru.orekingdom.channel.ThreadUiState
 import com.raaru.orekingdom.channel.ChannelOutbox
 import com.raaru.orekingdom.channel.ChannelStatus
 import com.raaru.orekingdom.channel.OutboxEnqueueResult
@@ -514,5 +515,80 @@ class KingdomSessionMessageTest {
 
         val rail = RailChannel("ch_general", "general", ChannelKind.Text, 0, ComposerState.Enabled)
         assertEquals(ComposerState.Enabled, session.effectiveComposer(rail, ackAtMs + 31_000L))
+    }
+
+    @Test
+    fun threadSnapshotReturnsBaseUnchangedWhenNoCachedReplies() {
+        startWith(
+            history = listOf(sessionMessage("m1", "ch_general", 1, "u_other")),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        val existing = ChannelMessageUi(
+            id = "mx", seq = 5L, authorName = "Other", authorRole = OreRole.Member,
+            body = "kept", timestamp = "2026-11-27T00:00:00Z",
+        )
+        val base = ThreadUiState(
+            threadId = "th_1", title = "Thread title", status = ChannelStatus.Ready,
+            replies = listOf(existing),
+        )
+
+        val result = session.threadSnapshot("ch_general", base)
+
+        assertEquals(base, result)
+        assertEquals(listOf(existing), result.replies)
+    }
+
+    @Test
+    fun threadSnapshotReplacesRepliesSortedBySeq() {
+        startWith(
+            history = listOf(
+                sessionMessage("m1", "ch_general", 1, "u_other"),
+                sessionMessage("r2", "ch_general", 9, "u_other").copy(threadId = "th_1"),
+                sessionMessage("r1", "ch_general", 8, "u_self").copy(threadId = "th_1"),
+            ),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        val base = ThreadUiState(threadId = "th_1", title = "Thread title", status = ChannelStatus.Ready)
+
+        val result = session.threadSnapshot("ch_general", base)
+
+        assertEquals(listOf("r1", "r2"), result.replies.map { it.id })
+        assertEquals(listOf(8L, 9L), result.replies.map { it.seq })
+        assertEquals("Self", result.replies[0].authorName)
+        assertTrue(result.replies[0].own)
+        assertEquals("Other", result.replies[1].authorName)
+    }
+
+    @Test
+    fun threadSnapshotExcludesOtherThreadsAndChannels() {
+        startWith(
+            history = listOf(
+                sessionMessage("r1", "ch_general", 8, "u_other").copy(threadId = "th_1"),
+                sessionMessage("x1", "ch_general", 9, "u_other").copy(threadId = "th_2"),
+                sessionMessage("m1", "ch_general", 1, "u_other"),
+            ),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+            ),
+        )
+        transport.threads = listOf(
+            ContractThread("th_1", "ch_other", null, "Other channel thread", "open", 1, "2026-11-27T02:00:00Z"),
+        )
+        transport.threadHistory = listOf(
+            sessionMessage("x2", "ch_other", 3, "u_other").copy(threadId = "th_1"),
+        )
+        runBlocking { session.loadThread("ch_other", "th_1") }
+        val base = ThreadUiState(threadId = "th_1", title = "Thread title", status = ChannelStatus.Ready)
+
+        val result = session.threadSnapshot("ch_general", base)
+
+        assertEquals(listOf("r1"), result.replies.map { it.id })
     }
 }
