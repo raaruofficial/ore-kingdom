@@ -1,11 +1,20 @@
 # Ore Kingdom — Fable client compile check (android/fable-client/).
-# Dispatch-only by design: exactly one deliberate run per dispatch, no
-# push/PR triggers, no tests, no APK, no signing. Compile-only verdict
-# for the Fable-built client module (owner-elected CI route, 2026-11-26).
+# Branch-scoped by design: GitHub only dispatches workflow_dispatch for
+# workflows on the default branch, and this module does not touch main —
+# so the run fires on pushes to the fable-client-compile branch itself
+# (paths-scoped to the module). One deliberate run per push, no PR
+# triggers, no tests, no APK, no signing. Compile-only verdict for the
+# Fable-built client module (owner-elected CI route, 2026-11-26).
 
 name: Fable client compile
 
 on:
+  push:
+    branches: [fable-client-compile]
+    paths:
+      - 'android/fable-client/**'
+      - 'android/settings.gradle.kts'
+      - '.github/workflows/fable-client-compile.yml'
   workflow_dispatch:
 
 permissions:
