@@ -250,4 +250,52 @@ class KingdomTransportHttpTest {
         assertEquals("please", item.appeal?.statement)
         assertEquals("pending", item.appeal?.state)
     }
+
+    @Test
+    fun pumpActiveRemainingSecondsPresentAndNullArms() {
+        val active = runBlocking {
+            transport(200, body = "{\"wallets\":[],\"day_bank\":{\"banked_days\":2,\"active_remaining_seconds\":3600,\"first_day_free\":true},\"atm\":{\"state\":\"locked\"}}").getPump()
+        }
+        assertEquals(3600L, active.activeRemainingSeconds)
+        assertEquals(2, active.bankedDays)
+        assertEquals(true, active.firstDayFree)
+
+        val inactive = runBlocking {
+            transport(200, body = "{\"wallets\":[],\"day_bank\":{\"banked_days\":0,\"active_remaining_seconds\":null,\"first_day_free\":false},\"atm\":{\"state\":\"locked\"}}").getPump()
+        }
+        assertEquals(null, inactive.activeRemainingSeconds)
+        assertEquals("locked", inactive.atmState)
+    }
+
+    @Test
+    fun authHeadersCarryTokenAndWalletVerbatim() {
+        var conn: FakeConnection? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            sessionToken = { "tok_123" },
+            walletAddress = { "7xKz9dF" },
+            connectionFactory = { url -> FakeConnection(url, 200, "{}", null).also { conn = it } },
+        )
+
+        runBlocking { t.getJson("/api/me") }
+
+        assertEquals("Bearer tok_123", conn?.getRequestProperty("Authorization"))
+        assertEquals("7xKz9dF", conn?.getRequestProperty("X-Kingdom-Wallet"))
+    }
+
+    @Test
+    fun authHeadersAbsentWithoutTokenOrWalletAndTimeoutsPinned() {
+        var conn: FakeConnection? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> FakeConnection(url, 200, "{}", null).also { conn = it } },
+        )
+
+        runBlocking { t.getJson("/api/me") }
+
+        assertEquals(null, conn?.getRequestProperty("Authorization"))
+        assertEquals(null, conn?.getRequestProperty("X-Kingdom-Wallet"))
+        assertEquals(10_000, conn?.connectTimeout)
+        assertEquals(15_000, conn?.readTimeout)
+    }
 }
