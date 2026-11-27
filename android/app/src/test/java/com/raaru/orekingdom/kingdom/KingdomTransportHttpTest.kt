@@ -77,4 +77,22 @@ class KingdomTransportHttpTest {
         assertEquals(503, thrown.code)
         assertEquals("", thrown.body)
     }
+
+    @Test
+    fun factoryReceivesTheVerbatimUrl() {
+        var seen: URL? = null
+        val t = KingdomTransport("http://localhost", connectionFactory = { url -> seen = url; FakeConnection(url, 200, "{}", null) })
+        runBlocking { t.getJson("/api/me") }
+        assertEquals("http://localhost/api/me", seen.toString())
+    }
+
+    @Test
+    fun openedConnectionCarriesMethodAndJsonHeaders() {
+        var conn: FakeConnection? = null
+        val t = KingdomTransport("http://localhost", connectionFactory = { url -> FakeConnection(url, 200, "{}", null).also { conn = it } })
+        runBlocking { t.getJson("/api/me") }
+        assertEquals("GET", conn?.requestMethod)
+        assertEquals("application/json", conn?.getRequestProperty("Accept"))
+        assertEquals("application/json", conn?.getRequestProperty("Content-Type"))
+    }
 }

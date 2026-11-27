@@ -196,4 +196,30 @@ class KingdomJsonMalformedTest {
         )
         assertThrows(JSONException::class.java) { KingdomJson.parseChannel(json) }
     }
+
+    @Test
+    fun entitlementsEmptyStringExpiryDecodesAsNull() {
+        val json = JSONObject(
+            """
+            { "role": "free",
+              "capabilities": {
+                "post": [], "react": [],
+                "tip": false, "gift": false,
+                "commercial_post": false, "spotlight_bid": false,
+                "pump_module": "none",
+                "pump_day_included": false, "atm_unlock_included": false,
+                "nightshift_console": false, "autopilot_surface": false,
+                "mod_loft": false },
+              "expires_at": "",
+              "founding": false,
+              "modules": {} }
+            """.trimIndent(),
+        )
+        assertNull(KingdomJson.parseEntitlements(json).expiresAt)
+    }
+
+    @Test
+    fun parseChannelsOnEmptyArrayReturnsEmptyList() {
+        assertTrue(KingdomJson.parseChannels(JSONArray("[]")).isEmpty())
+    }
 }

@@ -261,4 +261,30 @@ class EntitlementStoreLapseTest {
             withTimeout(5_000) { s.rail.first { it.status == RailStatus.Error } }
         }
     }
+
+    @Test
+    fun unreadForAModuleChannelNeverRenders() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        s.setUnread("ch_pump", 5)
+        s.setUnread("ch_general", 3)
+        assertTrue(s.rail.value.categories.flatMap { it.channels }.none { it.id == "ch_pump" })
+        assertEquals(3, s.rail.value.categories.flatMap { it.channels }.first { it.id == "ch_general" }.unreadCount)
+        val pushed = channels().filter { it.id != "ch_help" }
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), pushed))
+        runBlocking { withTimeout(5_000) { s.rail.first { r -> r.categories.flatMap { it.channels }.none { it.id == "ch_help" } } } }
+        assertTrue(s.rail.value.categories.flatMap { it.channels }.none { it.id == "ch_pump" })
+    }
+
+    @Test
+    fun pushDroppingTheLastVisitedChannelClearsItFromTheRail() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        s.selectChannel("ch_general")
+        assertEquals("ch_general", s.rail.value.lastVisitedChannelId)
+        val pushed = channels().filter { it.id != "ch_general" }
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), pushed))
+        runBlocking { withTimeout(5_000) { s.rail.first { r -> r.lastVisitedChannelId == null && r.categories.flatMap { it.channels }.none { it.id == "ch_general" } } } }
+        assertEquals(null, s.rail.value.lastVisitedChannelId)
+    }
 }

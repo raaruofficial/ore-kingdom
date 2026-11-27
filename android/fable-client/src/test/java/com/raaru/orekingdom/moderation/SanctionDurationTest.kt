@@ -26,4 +26,11 @@ class SanctionDurationTest {
         assertEquals("45s", sanctionDurationText(45L))
         assertEquals("0s", sanctionDurationText(-5L))
     }
+
+    @Test
+    fun boundaryLeftoversFormat() {
+        assertEquals("59s", sanctionDurationText(59L))
+        assertEquals("59m 39s", sanctionDurationText(3599L))
+        assertEquals("23h 59m", sanctionDurationText(86399L))
+    }
 }
