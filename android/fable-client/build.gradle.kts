@@ -35,6 +35,22 @@ android {
         // module uses no LiveData anywhere, so the detector has
         // nothing to check here; disabling it lets lint complete.
         disable += "NullSafeMutableLiveData"
+        // Stage 4 (2026-11-26): the Compose lint detectors crash the
+        // same way — IncompatibleClassChangeError inside
+        // FrequentlyChangingValueDetector (via
+        // RememberInCompositionDetectorKt helpers) and
+        // ComposableFlowOperatorDetector (CI run 45958355987). Root
+        // cause: the Compose BOM (2026.06.00) lint checks are built
+        // against a far newer lint/UAST API than AGP 8.7.3's lint
+        // 31.7.3 provides. Disabling the three crashing Compose
+        // checks lets the rest of lint (Android + Kotlin detectors)
+        // run and produce findings. The durable fix is aligning the
+        // AGP/lint toolchain with the Compose BOM — a post-seal
+        // decision (the seal pins AGP 8.7.3), recorded in
+        // INTEGRATION_RUN_2026-11-26.md stage 4.
+        disable += "FrequentlyChangingValue"
+        disable += "ComposableFlowOperator"
+        disable += "RememberInComposition"
         textReport = true
     }
 }
