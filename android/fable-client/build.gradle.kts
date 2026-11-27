@@ -52,6 +52,38 @@ android {
         // Issue id, not the detector class name (ComposableFlowOperatorDetector).
         disable += "FlowOperatorInvokedInComposition"
         disable += "RememberInComposition"
+        // Stage 4, attempt 3 (final): the two targeted disables above
+        // each exposed ANOTHER Compose detector crashing on the same
+        // binary-incompatible UAST helpers (ComposableUtils /
+        // ComposableBodyVisitor — CI 45959850273). The whole Compose
+        // lint family from BOM 2026.06.00 is therefore disabled by
+        // its documented issue ids (runtime, runtime-saveable, ui,
+        // foundation registries); Android + Kotlin lint checks still
+        // run and report. Re-enable family-wide when the AGP/lint
+        // toolchain aligns with the BOM (post-seal decision).
+        disable += setOf(
+            // androidx.compose.runtime (runtime-lint)
+            "AutoboxingStateCreation", "AutoboxingStateValueProperty",
+            "ComposableLambdaParameterNaming", "ComposableLambdaParameterPosition",
+            "ComposableNaming", "CompositionLocalNaming",
+            "CoroutineCreationDuringComposition", "MutableCollectionMutableState",
+            "OpaqueUnitKey", "ProduceStateDoesNotAssignValue",
+            "RememberReturnType", "StateFlowValueCalledInComposition",
+            "UnrememberedMutableState",
+            // androidx.compose.runtime.saveable (runtime-saveable-lint)
+            "RememberSaveableSaverParameter",
+            // androidx.compose.ui (ui-lint)
+            "UnnecessaryComposedModifier", "LocalContextConfigurationRead",
+            "LocalContextGetResourceValueCall", "LocalContextResourcesRead",
+            "ConfigurationScreenWidthHeight", "NonObservableLocale",
+            "ModifierFactoryExtensionFunction", "ModifierFactoryReturnType",
+            "ModifierFactoryUnreferencedReceiver", "ModifierNodeInspectableProperties",
+            "ModifierParameter", "MultipleAwaitPointerEventScopes",
+            "ReturnFromAwaitPointerEventScope", "SuspiciousCompositionLocalModifierRead",
+            "SuspiciousModifierThen",
+            // androidx.compose.foundation (foundation-lint)
+            "UseOfNonLambdaOffsetOverload", "UnusedBoxWithConstraintsScope",
+        )
         textReport = true
     }
 }
