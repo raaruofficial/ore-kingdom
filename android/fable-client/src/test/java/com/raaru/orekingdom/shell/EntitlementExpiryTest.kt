@@ -37,7 +37,7 @@ class EntitlementExpiryTest {
         var channels: List<ChannelDto>,
         var spotlight: SpotlightDto,
     ) : ShellTransport {
-        val pushes = MutableSharedFlow<Entitlements>(extraBufferCapacity = 8)
+        val pushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 8)
         override suspend fun getEntitlements() = entitlements
         override suspend fun getChannels() = channels
         override suspend fun getSpotlight() = spotlight
@@ -75,7 +75,7 @@ class EntitlementExpiryTest {
         val t = FakeTransport(ent("member", "2026-12-24T00:00:00Z", true), channels, vacant)
         val s = started(t)
         val pushed = ent("operator", "2027-01-31T00:00:00Z", false)
-        t.pushes.tryEmit(pushed)
+        t.pushes.tryEmit(EntitlementPush(pushed))
         awaitEntitlements(s, pushed)
         val v = s.entitlements.value!!
         assertEquals("operator", v.role)
@@ -88,7 +88,7 @@ class EntitlementExpiryTest {
         val t = FakeTransport(ent("member", "2026-12-24T00:00:00Z", true), channels, vacant)
         val s = started(t)
         val lapsed = ent("free", null, true)
-        t.pushes.tryEmit(lapsed)
+        t.pushes.tryEmit(EntitlementPush(lapsed))
         awaitEntitlements(s, lapsed)
         assertNull(s.entitlements.value!!.expiresAt)
         assertEquals("free", s.entitlements.value!!.role)

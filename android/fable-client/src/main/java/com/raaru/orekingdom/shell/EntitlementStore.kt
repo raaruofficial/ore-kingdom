@@ -59,6 +59,16 @@ data class SpotlightDto(
     val floorUsd: Int,
 )
 
+/**
+ * One entitlement push (`role.update` / `entitlement.update`). [channels] is the
+ * server-filtered channel list the push carried (SW2-03), or null when the push
+ * carried none or it failed to decode — null means the store must refetch.
+ */
+data class EntitlementPush(
+    val entitlements: Entitlements,
+    val channels: List<ChannelDto>? = null,
+)
+
 /** Seam onto the pinned contract's transport. Implemented at repo integration. */
 interface ShellTransport {
     /** REST `getEntitlements`. */
@@ -70,8 +80,8 @@ interface ShellTransport {
     /** REST spotlight state. */
     suspend fun getSpotlight(): SpotlightDto
 
-    /** Payloads of `role.update` and `entitlement.update` frames (handled identically). */
-    val entitlementPushes: Flow<Entitlements>
+    /** Pushes of `role.update` and `entitlement.update` frames (handled identically). */
+    val entitlementPushes: Flow<EntitlementPush>
 
     /** `unsubscribe` frame. */
     suspend fun unsubscribe(channelIds: List<String>)
@@ -173,7 +183,7 @@ class EntitlementStore(
 
     fun start() {
         scope.launch {
-            transport.entitlementPushes.collect { push -> mutex.withLock { applyLocked(push, fromPush = true) } }
+            transport.entitlementPushes.collect { push -> mutex.withLock { applyLocked(push.entitlements, fromPush = true, pushedChannels = push.channels) } }
         }
         scope.launch {
             while (isActive) {
@@ -219,23 +229,32 @@ class EntitlementStore(
         }
     }
 
-    private suspend fun applyLocked(read: Entitlements, fromPush: Boolean = false) {
+    private suspend fun applyLocked(read: Entitlements, fromPush: Boolean = false, pushedChannels: List<ChannelDto>? = null) {
         _entitlements.value = read
         failed = false
         publish() // composers follow the new capability set immediately
         val before = channels
-        if (fromPush) {
-            // fail-closed: a failed refetch leaves absence, not stale gated channels;
-            // the dropped ids stay owed an unsubscribe until a refetch succeeds.
-            pendingGone = pendingGone + before.map { it.id }
-            channels = emptyList()
-        }
-        val fresh = attempt { transport.getChannels() }
-        if (fresh == null) {
-            retrySoon = true
-            failed = !loaded
-            publish()
-            return
+        val fresh: List<ChannelDto>
+        if (fromPush && pushedChannels != null) {
+            // SW2-03: the push carried the server-filtered list — it lands
+            // atomically with the entitlements. No refetch, no fail-closed
+            // clear; the gone/unsubscribe tail below runs as usual.
+            fresh = pushedChannels
+        } else {
+            if (fromPush) {
+                // fail-closed: a failed refetch leaves absence, not stale gated channels;
+                // the dropped ids stay owed an unsubscribe until a refetch succeeds.
+                pendingGone = pendingGone + before.map { it.id }
+                channels = emptyList()
+            }
+            val fetched = attempt { transport.getChannels() }
+            if (fetched == null) {
+                retrySoon = true
+                failed = !loaded
+                publish()
+                return
+            }
+            fresh = fetched
         }
         val freshIds = fresh.map { it.id }.toSet()
         val gone = (pendingGone + before.map { it.id }).filterNot { it in freshIds }

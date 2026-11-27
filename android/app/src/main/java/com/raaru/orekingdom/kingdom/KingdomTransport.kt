@@ -7,6 +7,7 @@ import com.raaru.orekingdom.moderation.ModActionRequest
 import com.raaru.orekingdom.moderation.ModAppealDecision
 import com.raaru.orekingdom.moderation.ReportSubmission
 import com.raaru.orekingdom.shell.ChannelDto
+import com.raaru.orekingdom.shell.EntitlementPush
 import com.raaru.orekingdom.shell.Entitlements
 import com.raaru.orekingdom.shell.ShellTransport
 import com.raaru.orekingdom.shell.SpotlightDto
@@ -113,8 +114,8 @@ class KingdomTransport(
     private val walletAddress: () -> String? = { null },
 ) : ShellTransport {
 
-    private val _entitlementPushes = MutableSharedFlow<Entitlements>(extraBufferCapacity = 64)
-    override val entitlementPushes: Flow<Entitlements> = _entitlementPushes.asSharedFlow()
+    private val _entitlementPushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 64)
+    override val entitlementPushes: Flow<EntitlementPush> = _entitlementPushes.asSharedFlow()
 
     private val _frames = MutableSharedFlow<KingdomInbound>(extraBufferCapacity = 512)
     val frames: Flow<KingdomInbound> = _frames.asSharedFlow()
@@ -195,7 +196,15 @@ class KingdomTransport(
             "role.update", "entitlement.update" -> {
                 val ents = payload.optJSONObject("entitlements") ?: return
                 runCatching { KingdomJson.parseEntitlements(ents) }
-                    .onSuccess { _entitlementPushes.tryEmit(it) }
+                    .onSuccess { parsed ->
+                        // SW2-03: the push may carry the server-filtered channel
+                        // list. Absent or malformed → null, and the store
+                        // refetches exactly as it did before this key existed.
+                        val channels = payload.optJSONArray("channels")?.let { array ->
+                            runCatching { KingdomJson.parseChannels(array) }.getOrNull()
+                        }
+                        _entitlementPushes.tryEmit(EntitlementPush(parsed, channels))
+                    }
             }
             "ack" -> _frames.tryEmit(
                 KingdomInbound.Ack(

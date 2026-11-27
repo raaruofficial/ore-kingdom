@@ -63,7 +63,7 @@ class RailDerivationEdgeTest {
         var channels: List<ChannelDto>,
         var spotlight: SpotlightDto
     ) : ShellTransport {
-        val pushes = MutableSharedFlow<Entitlements>(extraBufferCapacity = 8)
+        val pushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 8)
         override suspend fun getEntitlements(): Entitlements = entitlements
         override suspend fun getChannels(): List<ChannelDto> = channels
         override suspend fun getSpotlight(): SpotlightDto = spotlight

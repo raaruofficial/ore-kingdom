@@ -1,5 +1,6 @@
 package com.raaru.orekingdom.kingdom
 
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import org.junit.Assert.assertNull
@@ -55,6 +56,20 @@ class KingdomJsonMalformedTest {
                  "last_activity_at": "2026-11-26T17:00:00Z" }""",
         )
         assertThrows(JSONException::class.java) { KingdomJson.parseThread(json) }
+    }
+
+    @Test
+    fun channelArrayWithMalformedEntryThrows() {
+        // SW2-03 premise: the transport decodes a push's channels array with
+        // parseChannels inside a runCatching — the throw is what makes a
+        // malformed array fall back to a refetch instead of landing half-shape.
+        val array = JSONArray(
+            """[ { "id": "ch_general", "category": "THE FLOOR", "name": "general",
+                  "kind": "text", "slowmode_sec": 0, "min_role_read": "free",
+                  "min_role_post": "member", "position": 0 },
+                { "id": "ch_help", "category": "THE FLOOR" } ]""",
+        )
+        assertThrows(JSONException::class.java) { KingdomJson.parseChannels(array) }
     }
 
     @Test

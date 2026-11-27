@@ -38,7 +38,7 @@ class RailOrderingTest {
         var channels: List<ChannelDto>,
         var spotlight: SpotlightDto,
     ) : ShellTransport {
-        val pushes = MutableSharedFlow<Entitlements>(extraBufferCapacity = 8)
+        val pushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 8)
         override suspend fun getEntitlements() = entitlements
         override suspend fun getChannels() = channels
         override suspend fun getSpotlight(): SpotlightDto = spotlight

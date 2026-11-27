@@ -47,17 +47,19 @@ class EntitlementStoreLapseTest {
         var channels: List<ChannelDto>,
         var spotlight: SpotlightDto,
     ) : ShellTransport {
-        val pushes = MutableSharedFlow<Entitlements>(extraBufferCapacity = 8)
+        val pushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 8)
         val unsubscribed = mutableListOf<List<String>>()
         var failEntitlements = false
         var failChannels = false
         var entitlementCalls = 0
+        var channelCalls = 0
         override suspend fun getEntitlements(): Entitlements {
             entitlementCalls++
             if (failEntitlements) throw IllegalStateException("read failed")
             return entitlements
         }
         override suspend fun getChannels(): List<ChannelDto> {
+            channelCalls++
             if (failChannels) throw IllegalStateException("read failed")
             return channels
         }
@@ -94,7 +96,7 @@ class EntitlementStoreLapseTest {
         val s = started(t)
         assertEquals(listOf("ch_general", "ch_help"), floorIds(s))
         t.channels = channels().filter { it.id != "ch_help" }
-        t.pushes.tryEmit(ent(listOf("ch_general")))
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general"))))
         runBlocking {
             withTimeout(5_000) { s.rail.first { r -> r.categories.flatMap { it.channels }.none { it.id == "ch_help" } } }
         }
@@ -108,7 +110,7 @@ class EntitlementStoreLapseTest {
         val s = started(t)
         t.channels = channels().filter { it.id != "ch_help" }
         t.failChannels = true
-        t.pushes.tryEmit(ent(emptyList()))
+        t.pushes.tryEmit(EntitlementPush(ent(emptyList())))
         // Fail-closed: a push whose refetch fails leaves absence, not the
         // stale gated channels — and no unsubscribe is sent yet.
         runBlocking {
@@ -119,6 +121,46 @@ class EntitlementStoreLapseTest {
         // The next successful read pays the pendingGone debt.
         t.failChannels = false
         s.refresh()
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { r -> r.categories.flatMap { it.channels }.map { it.id }.contains("ch_general") } }
+        }
+        assertEquals(listOf("ch_general"), floorIds(s))
+        assertEquals(listOf(listOf("ch_help")), t.unsubscribed)
+    }
+
+    @Test
+    fun pushCarryingChannelsAppliesThemWithoutRefetch() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        val callsAfterBootstrap = t.channelCalls
+        // If the store refetched now it would see this list (ch_general
+        // gone); the list the push carries is the one that must land.
+        t.channels = channels().filter { it.id != "ch_general" }
+        val pushed = channels().filter { it.id != "ch_help" }
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), pushed))
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { r -> r.categories.flatMap { it.channels }.none { it.id == "ch_help" } } }
+        }
+        assertEquals(listOf("ch_general"), floorIds(s))
+        assertEquals(listOf(listOf("ch_help")), t.unsubscribed)
+        assertEquals(callsAfterBootstrap, t.channelCalls)
+    }
+
+    @Test
+    fun pushCarryingChannelsSettlesAnOwedUnsubscribe() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        t.failChannels = true
+        t.pushes.tryEmit(EntitlementPush(ent(emptyList())))
+        // Fail-closed, as in the refetch test: absence, debt owed, no send.
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { it.categories.isEmpty() } }
+        }
+        assertTrue(t.unsubscribed.isEmpty())
+        // Channel reads are still failing — but a push carrying the list
+        // pays the pendingGone debt itself, with no refetch involved.
+        val pushed = channels().filter { it.id != "ch_help" }
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), pushed))
         runBlocking {
             withTimeout(5_000) { s.rail.first { r -> r.categories.flatMap { it.channels }.map { it.id }.contains("ch_general") } }
         }

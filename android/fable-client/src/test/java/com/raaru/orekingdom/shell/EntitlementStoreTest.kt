@@ -41,7 +41,7 @@ class EntitlementStoreTest {
         var channels: List<ChannelDto>,
         var spotlight: SpotlightDto,
     ) : ShellTransport {
-        val pushes = MutableSharedFlow<Entitlements>(extraBufferCapacity = 8)
+        val pushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 8)
         val unsubscribed = mutableListOf<List<String>>()
         override suspend fun getEntitlements() = entitlements
         override suspend fun getChannels() = channels
@@ -89,7 +89,7 @@ class EntitlementStoreTest {
         val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
         val s2 = started(t)
         t.channels = channels() + ch("ch_help", "THE FLOOR")
-        t.pushes.tryEmit(ent(listOf("ch_general", "ch_help")))
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general", "ch_help"))))
         runBlocking {
             withTimeout(5_000) {
                 s2.rail.first { r ->
@@ -164,7 +164,7 @@ class EntitlementStoreTest {
         val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
         val s = started(t)
         assertTrue(s.rail.value.categories[1].channels[1].composer is ComposerState.Upsell)
-        t.pushes.tryEmit(ent(listOf("ch_general", "ch_help")))
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general", "ch_help"))))
         runBlocking {
             withTimeout(5_000) {
                 s.rail.first { r -> r.categories.getOrNull(1)?.channels?.getOrNull(1)?.composer == ComposerState.Enabled }
@@ -177,7 +177,7 @@ class EntitlementStoreTest {
     fun pushWithLapsedCapabilitiesDowngradesComposers() {
         val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
         val s = started(t)
-        t.pushes.tryEmit(ent(emptyList()))
+        t.pushes.tryEmit(EntitlementPush(ent(emptyList())))
         runBlocking {
             withTimeout(5_000) {
                 s.rail.first { r -> r.categories.getOrNull(1)?.channels?.getOrNull(0)?.composer is ComposerState.Upsell }
