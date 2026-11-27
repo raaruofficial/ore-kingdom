@@ -239,4 +239,71 @@ class KingdomSessionReadStateTest {
         val with = runBlocking { session.loadThread("ch_general", "t_1") }
         assertTrue(with.reactionsEnabled)
     }
+
+    @Test
+    fun blankSearchQueryIsIdleAndNeverCallsTheTransport() {
+        transport = fakeTransport()
+        buildSession()
+
+        val empty = runBlocking { session.loadSearch("") }
+        val spaces = runBlocking { session.loadSearch("   ") }
+
+        assertEquals(SearchStatus.Idle, empty.status)
+        assertEquals(SearchStatus.Idle, spaces.status)
+        assertEquals(0, transport.searchCalls)
+    }
+
+    @Test
+    fun searchHitChannelNameResolvesFromSnapshotOrNull() {
+        transport = fakeTransport()
+        transport.searchRead = SearchRead(
+            messages = listOf(
+                sessionMessage("m_hit", "ch_general", 5, "u_other"),
+                sessionMessage("m_far", "ch_absent", 6, "u_other"),
+            ),
+            threads = emptyList(),
+        )
+        buildSession()
+        session.start()
+
+        val state = runBlocking { session.loadSearch("ore") }
+
+        assertEquals(SearchStatus.Ready, state.status)
+        assertEquals("general", state.messages.first { it.message.id == "m_hit" }.channelName)
+        assertEquals(null, state.messages.first { it.message.id == "m_far" }.channelName)
+    }
+
+    @Test
+    fun searchReadableChannelIdsEqualTheSnapshotIds() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(sessionMember("u_self", "Self")),
+            channels = listOf(sessionChannel("ch_general"), sessionChannel("ch_pump")),
+        )
+        buildSession()
+
+        val state = runBlocking { session.loadSearch("ore") }
+
+        assertEquals(setOf("ch_general", "ch_pump"), state.readableChannelIds)
+    }
+
+    @Test
+    fun searchThreadHitsMapArchivedFromState() {
+        transport = fakeTransport()
+        transport.searchRead = SearchRead(
+            messages = emptyList(),
+            threads = listOf(
+                ContractThread("t_open", "ch_general", null, "Open hit", "open", 2, "2026-11-27T02:00:00Z"),
+                ContractThread("t_arch", "ch_general", null, "Archived hit", "archived", 5, "2026-11-27T01:00:00Z"),
+            ),
+        )
+        buildSession()
+
+        val state = runBlocking { session.loadSearch("hit") }
+
+        assertFalse(state.threads.first { it.id == "t_open" }.archived)
+        assertTrue(state.threads.first { it.id == "t_arch" }.archived)
+        assertEquals(5, state.threads.first { it.id == "t_arch" }.replyCount)
+        assertEquals("general", state.threads.first { it.id == "t_open" }.channelName)
+    }
 }
