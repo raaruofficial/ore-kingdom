@@ -26,4 +26,9 @@ class SlowmodeMathTest {
     fun zeroSlowmodeNeverBlocks() {
         assertEquals(0, SlowmodeMath.remainingSeconds(0, lastAckAtMs = 0L, nowMs = 0L))
     }
+
+    @Test
+    fun clockSkewFutureAckShowsMoreThanFullWindow() {
+        assertEquals(35, SlowmodeMath.remainingSeconds(30, lastAckAtMs = 1_005_000L, nowMs = 1_000_000L))
+    }
 }

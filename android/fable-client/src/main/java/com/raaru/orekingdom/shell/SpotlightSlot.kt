@@ -147,9 +147,9 @@ private fun rememberRemaining(windowEndsAt: String): String? {
     return text
 }
 
-private fun remainingText(windowEndsAt: String): String? {
+internal fun remainingText(windowEndsAt: String, now: Instant = Instant.now()): String? {
     val end = runCatching { OffsetDateTime.parse(windowEndsAt).toInstant() }.getOrNull() ?: return null
-    val minutes = Duration.between(Instant.now(), end).let {
+    val minutes = Duration.between(now, end).let {
         if (it <= Duration.ZERO) return null
         (it.seconds + 59 + if (it.nano > 0) 1 else 0) / 60
     }
