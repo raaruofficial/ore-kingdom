@@ -1336,6 +1336,16 @@ c55Sock.close(); c55Other.close();
     t5f1After.body.sanctions.find((s) => s.duration_sec === 777002).appeal.state === "none",
     "sanction id reuse: an appeal on the newest sanction resolves to that sanction, not the older one");
 
+  const t5f7Hist = await get("/api/history?channel_id=ch_strategy&limit=50", "u_op");
+  const t5f7Msg = t5f7Hist.body.messages[0];
+  const t5f7QueueBefore = await get("/api/mod/queue", "u_mod");
+  const t5f7Before = t5f7QueueBefore.body.items.filter((i) => i.snapshot && i.snapshot.body === t5f7Msg.body).length;
+  const t5f7Report = await post("/api/reports", { target_kind: "message", target_id: t5f7Msg.id, reason: "spam", note: "t5f7 unreadable" }, "u_free");
+  const t5f7QueueAfter = await get("/api/mod/queue", "u_mod");
+  const t5f7After = t5f7QueueAfter.body.items.filter((i) => i.snapshot && i.snapshot.body === t5f7Msg.body).length;
+  ok(t5f7Report.status === 404 && t5f7After === t5f7Before,
+    "report guard: reporting a message in a channel the reporter cannot read is 404 and queues nothing");
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();

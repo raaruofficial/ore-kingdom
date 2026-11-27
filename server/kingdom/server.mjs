@@ -373,6 +373,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const target = messages.find((m) => m.id === body.target_id);
       if (body.target_kind !== "message" || !target) return json(res, 404, { error: "not_found" });
+      const targetChannel = channelById.get(target.channel_id);
+      if (!targetChannel || !readableChannels(user).includes(targetChannel)) return json(res, 404, { error: "not_found" });
       modQueue.push({
         report_id: `r_${++reportCounter}`, state: "open", claimed_by: null,
         reason: body.reason ?? "other", reporter_count: 1,
