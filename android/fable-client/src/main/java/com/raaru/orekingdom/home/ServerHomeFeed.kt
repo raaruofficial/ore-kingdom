@@ -107,7 +107,7 @@ fun ServerHomeFeed(
     onRetry: () -> Unit = {},
 ) {
     val space = OreTheme.space
-    val ordered = remember(state.items) { state.items.sortedBy { it.seq } }
+    val ordered = remember(state.items) { state.items.distinctBy { it.id }.sortedBy { it.seq } }
     val announcements = state.kind == HomeFeedKind.Announcements
     LazyColumn(
         modifier = modifier.fillMaxSize().background(OreTheme.color.surface.base),
@@ -185,9 +185,10 @@ fun ServerHomePresencePanel(
 ) {
     val space = OreTheme.space
     val order = remember { listOf(OrePresence.Online, OrePresence.Idle, OrePresence.Offline) }
-    val grouped = remember(state.members) { state.members.groupBy { it.presence } }
-    val activities = remember(state.members) {
-        state.members.mapNotNull { it.activity }.groupingBy { it }.eachCount().toList()
+    val unique = remember(state.members) { state.members.distinctBy { it.userId } }
+    val grouped = remember(unique) { unique.groupBy { it.presence } }
+    val activities = remember(unique) {
+        unique.mapNotNull { it.activity }.groupingBy { it }.eachCount().toList()
     }
     LazyColumn(
         modifier = modifier.fillMaxSize().background(OreTheme.color.surface.base),
