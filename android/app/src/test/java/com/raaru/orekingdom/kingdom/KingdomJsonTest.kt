@@ -90,6 +90,32 @@ class KingdomJsonTest {
     }
 
     @Test
+    fun threadDecodesFieldForField() {
+        val thread = KingdomJson.parseThread(
+            JSONObject(
+                """{ "id": "t_1", "channel_id": "ch_strategy", "anchor_message_id": null,
+                     "title": "Motherlode watch", "state": "active", "reply_count": 2,
+                     "last_activity_at": "2026-11-26T17:00:00Z" }""",
+            ),
+        )
+        assertEquals("t_1", thread.id)
+        assertEquals("ch_strategy", thread.channelId)
+        assertNull(thread.anchorMessageId)
+        assertEquals(2, thread.replyCount)
+        assertEquals("2026-11-26T17:00:00Z", thread.lastActivityAt)
+
+        val anchored = KingdomJson.parseThread(
+            JSONObject(
+                """{ "id": "t_2", "channel_id": "ch_general", "anchor_message_id": "m_9",
+                     "title": "Rig talk", "state": "archived", "reply_count": 0,
+                     "last_activity_at": "2026-11-26T18:00:00Z" }""",
+            ),
+        )
+        assertEquals("m_9", anchored.anchorMessageId)
+        assertEquals("archived", anchored.state)
+    }
+
+    @Test
     fun sendFrameCarriesIdempotencyKeyAsEnvelopeId() {
         val frame = JSONObject(KingdomJson.sendFrame("c_key1", "ch_general", "hi", null, "m_9"))
         assertEquals("send", frame.getString("type"))

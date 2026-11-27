@@ -22,6 +22,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.raaru.orekingdom.channel.ChannelComposer
 import com.raaru.orekingdom.channel.ChannelScreen
+import com.raaru.orekingdom.channel.SearchStatus
+import com.raaru.orekingdom.channel.SearchSurface
+import com.raaru.orekingdom.channel.SearchUiState
+import com.raaru.orekingdom.channel.ThreadList
+import com.raaru.orekingdom.channel.ThreadListUiState
+import com.raaru.orekingdom.channel.ThreadUiState
+import com.raaru.orekingdom.channel.ThreadView
 import com.raaru.orekingdom.designsystem.components.OreGhostButton
 import com.raaru.orekingdom.designsystem.components.OreText
 import com.raaru.orekingdom.designsystem.tokens.OreDarkColors
@@ -53,6 +60,9 @@ object KingdomRoutes {
     const val MOD_QUEUE = "modqueue"
     const val MOD_LOG = "modlog"
     const val SANCTIONS = "sanctions"
+    const val THREADS = "threads"
+    const val THREAD = "thread"
+    const val SEARCH = "search"
 }
 
 private data class ReportUi(
@@ -76,6 +86,8 @@ fun KingdomRoot(session: KingdomSession) {
 
     var route by rememberSaveable { mutableStateOf(KingdomRoutes.SHELL) }
     var profileUserId by rememberSaveable { mutableStateOf<String?>(null) }
+    var threadsChannelId by rememberSaveable { mutableStateOf<String?>(null) }
+    var openThreadId by rememberSaveable { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf<ReportUi?>(null) }
 
     fun openReport(kind: ReportTargetKind, targetId: String) {
@@ -96,7 +108,11 @@ fun KingdomRoot(session: KingdomSession) {
     }
 
     BackHandler(enabled = route != KingdomRoutes.SHELL) {
-        route = if (route == KingdomRoutes.PROFILE) KingdomRoutes.SHELL else KingdomRoutes.PROFILE
+        route = when (route) {
+            KingdomRoutes.THREAD -> KingdomRoutes.THREADS
+            KingdomRoutes.THREADS, KingdomRoutes.SEARCH, KingdomRoutes.PROFILE -> KingdomRoutes.SHELL
+            else -> KingdomRoutes.PROFILE
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -118,6 +134,11 @@ fun KingdomRoot(session: KingdomSession) {
                         session = session,
                         channel = channel,
                         onReportMessage = { messageId -> openReport(ReportTargetKind.Message, messageId) },
+                        onOpenThreads = { channelId ->
+                            threadsChannelId = channelId
+                            route = KingdomRoutes.THREADS
+                        },
+                        onOpenSearch = { route = KingdomRoutes.SEARCH },
                     )
                 },
                 moduleContent = { entry ->
@@ -166,6 +187,53 @@ fun KingdomRoot(session: KingdomSession) {
             KingdomRoutes.MOD_QUEUE -> ModQueueRoute(session = session, onBack = { route = KingdomRoutes.PROFILE })
             KingdomRoutes.MOD_LOG -> ModLogRoute(session = session, onBack = { route = KingdomRoutes.PROFILE })
             KingdomRoutes.SANCTIONS -> SanctionsRoute(session = session, onBack = { route = KingdomRoutes.PROFILE })
+            KingdomRoutes.THREADS -> {
+                val channelId = threadsChannelId
+                if (channelId == null) {
+                    KingdomSecondaryScaffold(title = "Threads", onBack = { route = KingdomRoutes.SHELL }) {
+                        ProfileLoadingNote(onRetry = { route = KingdomRoutes.SHELL })
+                    }
+                } else {
+                    ThreadsRoute(
+                        session = session,
+                        channelId = channelId,
+                        onBack = { route = KingdomRoutes.SHELL },
+                        onThreadSelected = { threadId ->
+                            openThreadId = threadId
+                            route = KingdomRoutes.THREAD
+                        },
+                    )
+                }
+            }
+            KingdomRoutes.THREAD -> {
+                val channelId = threadsChannelId
+                val threadId = openThreadId
+                if (channelId == null || threadId == null) {
+                    KingdomSecondaryScaffold(title = "Thread", onBack = { route = KingdomRoutes.SHELL }) {
+                        ProfileLoadingNote(onRetry = { route = KingdomRoutes.SHELL })
+                    }
+                } else {
+                    ThreadRoute(
+                        session = session,
+                        channelId = channelId,
+                        threadId = threadId,
+                        onBack = { route = KingdomRoutes.THREADS },
+                    )
+                }
+            }
+            KingdomRoutes.SEARCH -> SearchRoute(
+                session = session,
+                onBack = { route = KingdomRoutes.SHELL },
+                onMessageOpen = { channelId, _ ->
+                    session.openChannel(channelId)
+                    route = KingdomRoutes.SHELL
+                },
+                onThreadOpen = { channelId, threadId ->
+                    threadsChannelId = channelId
+                    openThreadId = threadId
+                    route = KingdomRoutes.THREAD
+                },
+            )
         }
 
         // Report sheet overlay (host container for the client's sheet content).
@@ -275,6 +343,8 @@ private fun ChannelHost(
     session: KingdomSession,
     channel: RailChannel,
     onReportMessage: (messageId: String) -> Unit,
+    onOpenThreads: (channelId: String) -> Unit,
+    onOpenSearch: () -> Unit,
 ) {
     val entitlements by session.store.entitlements.collectAsState()
     // Collected so the snapshots below recompose whenever the session,
@@ -324,6 +394,16 @@ private fun ChannelHost(
         onRetry = { session.retryChannel(channel.id) },
         composer = {
             Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(OreTheme.color.surface.raised)
+                        .padding(horizontal = OreTheme.space.md, vertical = OreTheme.space.xs),
+                    horizontalArrangement = Arrangement.spacedBy(OreTheme.space.sm),
+                ) {
+                    OreGhostButton(text = "Threads", onClick = { onOpenThreads(channel.id) })
+                    OreGhostButton(text = "Search", onClick = onOpenSearch)
+                }
                 selectedMessageId?.let { messageId ->
                     Row(
                         modifier = Modifier
@@ -356,6 +436,7 @@ private fun ChannelComposerBlock(
     channel: RailChannel,
     composerState: com.raaru.orekingdom.designsystem.components.ComposerState,
     connected: Boolean,
+    threadId: String? = null,
 ) {
     var slowmodeRefresh by remember(channel.id) { mutableIntStateOf(0) }
     // Reading slowmodeRefresh keeps the block recomposing when a countdown elapses.
@@ -367,6 +448,7 @@ private fun ChannelComposerBlock(
         outbox = session.outbox,
         onSendAck = { },
         online = connected,
+        threadId = threadId,
         onTyping = { typing -> session.setTyping(channel.id, typing) },
         onSlowmodeElapsed = { slowmodeRefresh++ },
         controller = session.sendController,
@@ -440,5 +522,94 @@ private fun ModuleHost(session: KingdomSession, entry: ModuleEntry) {
             )
         }
         else -> com.raaru.orekingdom.shell.ModulePlaceholder(entry = entry)
+    }
+}
+
+/* ---- thread + search routes (stage-1 remainder, mounted 2026-11-27) ---- */
+
+@Composable
+private fun ThreadsRoute(
+    session: KingdomSession,
+    channelId: String,
+    onBack: () -> Unit,
+    onThreadSelected: (String) -> Unit,
+) {
+    var state by remember(channelId) { mutableStateOf(ThreadListUiState()) }
+    var reload by remember(channelId) { mutableIntStateOf(0) }
+    LaunchedEffect(channelId, reload) { state = session.loadThreadList(channelId) }
+    KingdomSecondaryScaffold(title = "Threads", onBack = onBack) {
+        ThreadList(state = state, onThreadSelected = onThreadSelected, onRetry = { reload++ })
+    }
+}
+
+@Composable
+private fun ThreadRoute(
+    session: KingdomSession,
+    channelId: String,
+    threadId: String,
+    onBack: () -> Unit,
+) {
+    val rail by session.store.rail.collectAsState()
+    val connected by session.transport.connected.collectAsState()
+    val version by session.version.collectAsState()
+    var loaded by remember(channelId, threadId) { mutableStateOf<ThreadUiState?>(null) }
+    var reload by remember(channelId, threadId) { mutableIntStateOf(0) }
+    LaunchedEffect(channelId, threadId, reload) { loaded = session.loadThread(channelId, threadId) }
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(channelId) {
+        while (true) {
+            delay(1_000)
+            tick++
+        }
+    }
+    val nowMs = remember(tick) { System.currentTimeMillis() }
+    // Collected so the snapshot below recomputes whenever the session cache moves.
+    @Suppress("UNUSED_EXPRESSION")
+    version
+    val base = loaded ?: ThreadUiState(threadId = threadId, title = "")
+    val state = session.threadSnapshot(channelId, base)
+    val channel = rail.categories.flatMap { it.channels }.firstOrNull { it.id == channelId }
+    KingdomSecondaryScaffold(title = state.title.ifEmpty { "Thread" }, onBack = onBack) {
+        ThreadView(
+            state = state,
+            composerState = channel?.let { session.effectiveComposer(it, nowMs) }
+                ?: com.raaru.orekingdom.designsystem.components.ComposerState.Disabled(),
+            onReactionToggle = { messageId, emoji -> session.toggleReaction(channelId, messageId, emoji) },
+            onMediaOpen = { _, _ -> /* no media viewer shape in the contract; thumbnails only */ },
+            activeComposer = { cState ->
+                if (channel != null) {
+                    ChannelComposerBlock(session, channel, cState, connected, threadId)
+                }
+            },
+            onRetry = { reload++ },
+        )
+    }
+}
+
+@Composable
+private fun SearchRoute(
+    session: KingdomSession,
+    onBack: () -> Unit,
+    onMessageOpen: (channelId: String, messageId: String) -> Unit,
+    onThreadOpen: (channelId: String, threadId: String) -> Unit,
+) {
+    var state by remember { mutableStateOf(SearchUiState()) }
+    var submitted by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(submitted) {
+        val q = submitted ?: return@LaunchedEffect
+        state = session.loadSearch(q)
+    }
+    KingdomSecondaryScaffold(title = "Search", onBack = onBack) {
+        SearchSurface(
+            state = state,
+            onQueryChange = { state = state.copy(query = it) },
+            onSubmit = {
+                state = state.copy(status = SearchStatus.Loading)
+                submitted = state.query
+            },
+            onMessageOpen = onMessageOpen,
+            onThreadOpen = onThreadOpen,
+            onRetry = { submitted = state.query },
+        )
     }
 }

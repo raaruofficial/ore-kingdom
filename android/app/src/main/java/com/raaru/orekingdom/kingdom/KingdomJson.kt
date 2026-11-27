@@ -28,6 +28,17 @@ data class ContractMessage(
     val commercial: Boolean,
 )
 
+/** CONTRACT.md §6 Thread, field-for-field. */
+data class ContractThread(
+    val id: String,
+    val channelId: String,
+    val anchorMessageId: String?,
+    val title: String,
+    val state: String,
+    val replyCount: Int,
+    val lastActivityAt: String,
+)
+
 /** CONTRACT.md §6 Member (render shape). */
 data class ContractMember(
     val userId: String,
@@ -126,6 +137,16 @@ object KingdomJson {
         role = json.getString("role"),
         founding = json.optBoolean("founding", false),
         moderator = json.optBoolean("moderator", false),
+    )
+
+    fun parseThread(json: JSONObject): ContractThread = ContractThread(
+        id = json.getString("id"),
+        channelId = json.getString("channel_id"),
+        anchorMessageId = json.optStringOrNull("anchor_message_id"),
+        title = json.getString("title"),
+        state = json.getString("state"),
+        replyCount = json.getInt("reply_count"),
+        lastActivityAt = json.getString("last_activity_at"),
     )
 
     fun parsePresence(json: JSONObject): PresenceUi = ChannelRealtime.presenceOf(

@@ -255,6 +255,54 @@ try {
   const hidden = await get("/api/search?q=motherlode", "u_free");
   ok(hidden.body.threads.length === 0 && hidden.body.messages.length === 0, "search: member-gated results invisible to free user");
 
+
+  // 14 — thread reads (list endpoint, history filter, reply bookkeeping)
+  const threadsList = await get("/api/threads?channel_id=ch_strategy", "u_host");
+  ok(threadsList.status === 200 && threadsList.body.threads.length === 1, "threads: list returns the seeded thread for a member");
+  const seededThread = threadsList.body.threads[0];
+  ok(seededThread.id === "t_1" && seededThread.channel_id === "ch_strategy" && seededThread.state === "active" &&
+    seededThread.reply_count === 2 && seededThread.anchor_message_id === null && seededThread.title.includes("Motherlode"),
+    "threads: seeded thread carries the contract shape");
+  const threadsFree = await get("/api/threads?channel_id=ch_strategy", "u_free");
+  ok(threadsFree.status === 404, "threads: gated channel is 404 for a free user");
+  const threadsEmpty = await get("/api/threads?channel_id=ch_general", "u_host");
+  ok(threadsEmpty.status === 200 && threadsEmpty.body.threads.length === 0, "threads: channel without threads returns an empty list");
+  const threadsMissing = await get("/api/threads?channel_id=ch_missing", "u_host");
+  ok(threadsMissing.status === 404, "threads: unknown channel is 404");
+
+  const th = await new WsTest().connect("u_host");
+  const tm = await new WsTest().connect("u_mod");
+  th.send({ type: "send", id: "c_thread_1", channel_id: "ch_strategy", payload: { body: "thread reply one", thread_id: "t_1" } });
+  const thAck = await th.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_thread_1", "thread reply 1 ack");
+  tm.send({ type: "send", id: "c_thread_2", channel_id: "ch_strategy", payload: { body: "thread reply two", thread_id: "t_1" } });
+  const tmAck = await tm.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_thread_2", "thread reply 2 ack");
+  ok(!!thAck && !!tmAck, "threads: both replies acked");
+
+  const thHist = await get("/api/history?channel_id=ch_strategy&thread_id=t_1", "u_host");
+  ok(thHist.status === 200 && thHist.body.messages.length === 2 &&
+    thHist.body.messages.every((m) => m.thread_id === "t_1"),
+    "threads: history thread_id filter returns only that thread's messages");
+  ok(thHist.body.messages.map((m) => m.body).join("|") === "thread reply one|thread reply two",
+    "threads: filtered history carries the two replies in seq order");
+  const thHistFree = await get("/api/history?channel_id=ch_strategy&thread_id=t_1", "u_free");
+  ok(thHistFree.status === 404, "threads: history thread filter still 404 for a free user (channel gate dominates)");
+  const thNone = await get("/api/history?channel_id=ch_strategy&thread_id=t_999", "u_host");
+  ok(thNone.status === 200 && thNone.body.messages.length === 0, "threads: unknown thread_id filters to an empty page");
+
+  const threadsAfter = await get("/api/threads?channel_id=ch_strategy", "u_host");
+  ok(threadsAfter.body.threads[0].reply_count === 4, "threads: reply_count grows by the two real replies (2 seed + 2)");
+  ok(threadsAfter.body.threads[0].last_activity_at === thHist.body.messages[1].created_at,
+    "threads: last_activity_at tracks the newest reply");
+
+  const acksBefore = tm.count((f) => f.type === "ack" && f.payload.for_id === "c_thread_2");
+  tm.send({ type: "send", id: "c_thread_2", channel_id: "ch_strategy", payload: { body: "thread reply two", thread_id: "t_1" } });
+  await new Promise((r) => setTimeout(r, 250));
+  ok(tm.count((f) => f.type === "ack" && f.payload.for_id === "c_thread_2") === acksBefore + 1,
+    "threads: idempotent retry re-acks");
+  const threadsFinal = await get("/api/threads?channel_id=ch_strategy", "u_host");
+  ok(threadsFinal.body.threads[0].reply_count === 4, "threads: idempotent retry does not double-count the reply");
+  th.close(); tm.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();

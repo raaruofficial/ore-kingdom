@@ -270,9 +270,10 @@ const server = http.createServer(async (req, res) => {
       const ch = channelById.get(channelId);
       if (!ch || !readableChannels(user).includes(ch)) return json(res, 404, { error: "not_found" });
       const beforeSeq = url.searchParams.get("before_seq");
+      const threadId = url.searchParams.get("thread_id");
       const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 200);
       const eligible = messages
-        .filter((m) => m.channel_id === channelId && (beforeSeq === null || m.seq < Number(beforeSeq)))
+        .filter((m) => m.channel_id === channelId && (beforeSeq === null || m.seq < Number(beforeSeq)) && (threadId === null || m.thread_id === threadId))
         .sort((a, b) => a.seq - b.seq);
       const page = eligible.slice(-limit);
       return json(res, 200, {
@@ -289,6 +290,12 @@ const server = http.createServer(async (req, res) => {
           .map((m) => messageShape(m, user)),
         threads: threads.filter((t) => readable.has(t.channel_id) && t.title.toLowerCase().includes(q)),
       });
+    }
+    if (req.method === "GET" && path === "/api/threads") {
+      const channelId = url.searchParams.get("channel_id");
+      const ch = channelById.get(channelId);
+      if (!ch || !readableChannels(user).includes(ch)) return json(res, 404, { error: "not_found" });
+      return json(res, 200, { threads: threads.filter((t) => t.channel_id === channelId) });
     }
     if (req.method === "GET" && path === "/api/modules/pump") {
       const operator = ROLE_RANK[effectiveRole(user)] >= 2;
@@ -629,6 +636,13 @@ function handleClientFrame(sock, text) {
         reactions: new Map(), commercial: false,
       };
       messages.push(m);
+      if (m.thread_id !== null) {
+        const thread = threads.find((t) => t.id === m.thread_id);
+        if (thread) {
+          thread.reply_count += 1;
+          thread.last_activity_at = m.created_at;
+        }
+      }
       lastSendAt.set(`${user.id}:${channelId}`, Date.now());
       if (env.id) idempotency.set(key, { message_id: m.id, seq });
       sock.send(frame("ack", { for_id: env.id, message_id: m.id, seq }, channelId));

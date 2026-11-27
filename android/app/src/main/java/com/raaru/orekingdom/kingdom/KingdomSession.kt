@@ -12,6 +12,13 @@ import com.raaru.orekingdom.channel.HistoryPageRequest
 import com.raaru.orekingdom.channel.MessageDecision
 import com.raaru.orekingdom.channel.OutboxEntry
 import com.raaru.orekingdom.channel.RealtimeOutbound
+import com.raaru.orekingdom.channel.SearchMessageHitUi
+import com.raaru.orekingdom.channel.SearchStatus
+import com.raaru.orekingdom.channel.SearchThreadHitUi
+import com.raaru.orekingdom.channel.SearchUiState
+import com.raaru.orekingdom.channel.ThreadListUiState
+import com.raaru.orekingdom.channel.ThreadSummaryUi
+import com.raaru.orekingdom.channel.ThreadUiState
 import com.raaru.orekingdom.designsystem.components.ComposerState
 import com.raaru.orekingdom.designsystem.components.OrePresence
 import com.raaru.orekingdom.designsystem.components.OreReaction
@@ -681,6 +688,127 @@ class KingdomSession(
         )
     } catch (_: Exception) {
         SanctionNoticesUiState(status = SanctionNoticesStatus.Error)
+    }
+
+    /* ---- thread + search read models (stage-1 remainder, mounted 2026-11-27) ---- */
+
+    suspend fun loadThreadList(channelId: String): ThreadListUiState = try {
+        val threads = transport.getThreads(channelId)
+        ThreadListUiState(
+            status = ChannelStatus.Ready,
+            threads = threads.map { thread ->
+                ThreadSummaryUi(
+                    id = thread.id,
+                    title = thread.title,
+                    anchorAuthorName = thread.anchorMessageId?.let { anchorId ->
+                        synchronized(lock) { messages[anchorId] }
+                            ?.let { member(it.authorId)?.displayName ?: it.authorId }
+                    } ?: "Unknown",
+                    replyCount = thread.replyCount,
+                    lastActivity = thread.lastActivityAt,
+                    archived = thread.state == "archived",
+                )
+            }.sortedByDescending { it.lastActivity },
+        )
+    } catch (_: Exception) {
+        ThreadListUiState(status = ChannelStatus.Error)
+    }
+
+    suspend fun loadThread(channelId: String, threadId: String): ThreadUiState {
+        val thread = try {
+            transport.getThreads(channelId).firstOrNull { it.id == threadId }
+        } catch (_: Exception) {
+            null
+        } ?: return ThreadUiState(threadId = threadId, title = "", status = ChannelStatus.Error)
+        return try {
+            val replies = transport.getThreadHistory(channelId, threadId)
+            replies.forEach { insert(it) }
+            val anchor = thread.anchorMessageId?.let { anchorId ->
+                synchronized(lock) { messages[anchorId] }
+            }
+            ThreadUiState(
+                threadId = thread.id,
+                title = thread.title,
+                status = ChannelStatus.Ready,
+                archived = thread.state == "archived",
+                // TODO-CONTRACT: no unarchive action shape exists; never inferred.
+                canUnarchive = false,
+                anchor = anchor?.let { messageUi(it) },
+                replies = replies.map { messageUi(it) },
+                reactionsEnabled = store.entitlements.value?.capabilities?.react?.contains(channelId) == true,
+            )
+        } catch (_: Exception) {
+            ThreadUiState(threadId = thread.id, title = thread.title, status = ChannelStatus.Error)
+        }
+    }
+
+    /**
+     * Live re-derivation of a loaded thread from the message cache: WS
+     * broadcasts (including the echo of the viewer's own reply) land in
+     * the cache first, so the open thread view tracks them.
+     */
+    fun threadSnapshot(channelId: String, base: ThreadUiState): ThreadUiState {
+        val replies = synchronized(lock) {
+            messages.values
+                .filter { it.channelId == channelId && it.threadId == base.threadId }
+                .sortedBy { it.seq }
+        }
+        if (replies.isEmpty()) return base
+        return base.copy(replies = replies.map { messageUi(it) })
+    }
+
+    suspend fun loadSearch(query: String): SearchUiState {
+        if (query.isBlank()) return SearchUiState(query = query, status = SearchStatus.Idle)
+        return try {
+            val read = transport.getSearch(query)
+            read.messages.forEach { insert(it) }
+            val channels = transport.channelsSnapshot.value
+            SearchUiState(
+                query = query,
+                status = SearchStatus.Ready,
+                messages = read.messages.map { message ->
+                    SearchMessageHitUi(
+                        channelId = message.channelId,
+                        message = messageUi(message),
+                        channelName = channels.firstOrNull { it.id == message.channelId }?.name,
+                    )
+                },
+                threads = read.threads.map { thread ->
+                    SearchThreadHitUi(
+                        id = thread.id,
+                        channelId = thread.channelId,
+                        title = thread.title,
+                        archived = thread.state == "archived",
+                        replyCount = thread.replyCount,
+                        lastActivity = thread.lastActivityAt,
+                        channelName = channels.firstOrNull { it.id == thread.channelId }?.name,
+                    )
+                },
+                readableChannelIds = channels.map { it.id }.toSet(),
+            )
+        } catch (_: Exception) {
+            SearchUiState(query = query, status = SearchStatus.Error)
+        }
+    }
+
+    /** Maps a cached contract message to its render row (the same mapping channelState uses). */
+    private fun messageUi(message: ContractMessage): ChannelMessageUi {
+        val author = member(message.authorId)
+        return ChannelMessageUi(
+            id = message.id,
+            seq = message.seq,
+            authorName = author?.displayName ?: message.authorId,
+            authorRole = kingdomOreRoleOf(author?.role ?: "free"),
+            body = message.body,
+            timestamp = message.createdAt,
+            edited = message.editedAt != null,
+            deleted = message.deletedAt != null,
+            commercial = message.commercial,
+            reactions = message.reactions.map { OreReaction(it.emoji, it.count, it.mine) },
+            own = message.authorId == selfId,
+            founding = author?.founding == true,
+            moderator = author?.moderator == true,
+        )
     }
 
     /* ---- cache helpers ---- */

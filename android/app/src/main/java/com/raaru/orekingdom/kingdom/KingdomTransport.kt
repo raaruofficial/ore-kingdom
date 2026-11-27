@@ -91,6 +91,8 @@ data class SanctionRead(
 )
 data class HistoryRead(val messages: List<ContractMessage>, val hasMore: Boolean)
 
+data class SearchRead(val messages: List<ContractMessage>, val threads: List<ContractThread>)
+
 /**
  * The host transport behind every client seam (INTEGRATION_MAP §3):
  * REST reads/writes over HttpURLConnection (the :app convention, see
@@ -271,6 +273,35 @@ class KingdomTransport(
                 (0 until array.length()).map { KingdomJson.parseMessage(array.getJSONObject(it)) }
             },
             hasMore = json.getBoolean("has_more"),
+        )
+    }
+
+    /** Thread list for one channel (server thread reads; 404 surfaces as a failed read). */
+    suspend fun getThreads(channelId: String): List<ContractThread> =
+        getJson("/api/threads?channel_id=" + URLEncoder.encode(channelId, "UTF-8"))
+            .getJSONArray("threads").let { array ->
+                (0 until array.length()).map { KingdomJson.parseThread(array.getJSONObject(it)) }
+            }
+
+    /** One thread's messages via the history read's thread_id filter. */
+    suspend fun getThreadHistory(channelId: String, threadId: String): List<ContractMessage> {
+        val query = "channel_id=" + URLEncoder.encode(channelId, "UTF-8") +
+            "&thread_id=" + URLEncoder.encode(threadId, "UTF-8") + "&limit=200"
+        return getJson("/api/history?$query").getJSONArray("messages").let { array ->
+            (0 until array.length()).map { KingdomJson.parseMessage(array.getJSONObject(it)) }
+        }
+    }
+
+    /** CONTRACT.md §7 search read: entitlement-filtered messages + threads. */
+    suspend fun getSearch(query: String): SearchRead {
+        val json = getJson("/api/search?q=" + URLEncoder.encode(query, "UTF-8"))
+        return SearchRead(
+            messages = json.getJSONArray("messages").let { array ->
+                (0 until array.length()).map { KingdomJson.parseMessage(array.getJSONObject(it)) }
+            },
+            threads = json.getJSONArray("threads").let { array ->
+                (0 until array.length()).map { KingdomJson.parseThread(array.getJSONObject(it)) }
+            },
         )
     }
 
