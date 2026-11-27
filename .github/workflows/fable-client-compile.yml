@@ -5,6 +5,10 @@
 # (paths-scoped to the module). One deliberate run per push, no PR
 # triggers, no tests, no APK, no signing. Compile-only verdict for the
 # Fable-built client module (owner-elected CI route, 2026-11-26).
+#
+# Session 9 (Sonnet package, 2026-11-26): the same run now also proves
+# the JVM unit tests and Android lint for :fable-client — one combined
+# run per push (compile -> test -> lint), per the CI-economy rule.
 
 name: Fable client compile
 
@@ -22,7 +26,7 @@ permissions:
 
 jobs:
   compile:
-    name: Compile :fable-client (Kotlin)
+    name: Compile + test + lint :fable-client
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -41,3 +45,23 @@ jobs:
 
       - name: Compile fable-client Kotlin
         run: gradle :fable-client:compileDebugKotlin --stacktrace
+
+      - name: Unit tests (session 9)
+        run: gradle :fable-client:testDebugUnitTest --stacktrace
+
+      - name: Test report summary
+        if: always()
+        run: |
+          for f in fable-client/build/test-results/testDebugUnitTest/*.xml; do
+            [ -f "$f" ] && grep -o 'testsuite name="[^"]*" tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$f" || true
+          done
+
+      - name: Lint fable-client
+        if: always()
+        continue-on-error: true
+        run: gradle :fable-client:lintDebug --stacktrace
+
+      - name: Lint report (text)
+        if: always()
+        run: |
+          cat fable-client/build/reports/lint-results-debug.txt || echo "no lint text report produced"

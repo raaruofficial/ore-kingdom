@@ -40,4 +40,8 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.animation:animation")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Session 9 (Sonnet package): JVM unit tests for the logic-bearing
+    // pieces (outbox, realtime ordering, entitlement store, pump copy).
+    testImplementation("junit:junit:4.13.2")
 }
