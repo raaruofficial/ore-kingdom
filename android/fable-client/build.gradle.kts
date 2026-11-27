@@ -5,9 +5,9 @@
 //   ~/workspace/goals/ore-kingdom-dapp-store-submission/files/fable-build/output
 // Plugin versions match the root build file (AGP 8.7.3 / Kotlin 2.0.21).
 plugins {
-    id("com.android.library") version "8.7.3"
-    id("org.jetbrains.kotlin.android") version "2.0.21"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
