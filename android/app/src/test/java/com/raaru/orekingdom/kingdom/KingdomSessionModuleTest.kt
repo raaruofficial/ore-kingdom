@@ -1,5 +1,8 @@
 package com.raaru.orekingdom.kingdom
 
+import com.raaru.orekingdom.passes.CrownStatus
+import com.raaru.orekingdom.passes.PassStatus
+import com.raaru.orekingdom.passes.PassRecipientUi
 import com.raaru.orekingdom.modules.pump.PumpAtmState
 import com.raaru.orekingdom.modules.pump.PumpStatus
 import com.raaru.orekingdom.modules.pump.PumpWalletUi
@@ -136,5 +139,77 @@ class KingdomSessionModuleTest {
         assertEquals(PumpStatus.Error, load.console.status)
         assertEquals(PumpStatus.Error, load.dayBank.status)
         assertEquals(PumpStatus.Error, load.atm.status)
+    }
+
+    @Test
+    fun loadPassesRecipientsAreTheDirectoryMinusSelf() {
+        transport = FakeSessionTransport(
+            me = "u_self" to sessionMember("u_self", "Self"),
+            members = listOf(
+                sessionMember("u_self", "Self"),
+                sessionMember("u_other", "Other"),
+                sessionMember("u_third", "Third"),
+            ),
+            channels = listOf(sessionChannel("ch_general")),
+        )
+        transport.passesRead = PassesRead(lifetimeHolder = true, prestigeSeatsRemaining = 17)
+        buildSession()
+        session.start()
+
+        val load = runBlocking { session.loadPasses() }
+
+        assertEquals(PassStatus.Ready, load.passes.status)
+        assertEquals(
+            listOf(PassRecipientUi("u_other", "Other"), PassRecipientUi("u_third", "Third")),
+            load.passes.recipients,
+        )
+        assertTrue(load.passes.lifetimeHolder)
+        assertEquals(17, load.passes.prestigeSeatsRemaining)
+    }
+
+    @Test
+    fun loadPassesNullSeatsPassThroughVerbatim() {
+        transport = fakeTransport()
+        transport.passesRead = PassesRead(lifetimeHolder = false, prestigeSeatsRemaining = null)
+        transport.crownRead = CrownRead(holderName = "Other", month = "2026-11")
+        buildSession()
+        session.start()
+
+        val load = runBlocking { session.loadPasses() }
+
+        assertEquals(null, load.passes.prestigeSeatsRemaining)
+        assertEquals(CrownStatus.Ready, load.crown.status)
+        assertEquals("Other", load.crown.holderName)
+        assertEquals("2026-11", load.crown.month)
+    }
+
+    @Test
+    fun loadPassesCrownFailureLeavesPassesReady() {
+        transport = fakeTransport()
+        transport.passesRead = PassesRead(lifetimeHolder = false, prestigeSeatsRemaining = 3)
+        transport.crownError = RuntimeException("boom")
+        buildSession()
+        session.start()
+
+        val load = runBlocking { session.loadPasses() }
+
+        assertEquals(PassStatus.Ready, load.passes.status)
+        assertEquals(3, load.passes.prestigeSeatsRemaining)
+        assertEquals(CrownStatus.Error, load.crown.status)
+    }
+
+    @Test
+    fun loadPassesPassesFailureStillAttemptsCrown() {
+        transport = fakeTransport()
+        transport.passesError = RuntimeException("boom")
+        transport.crownRead = CrownRead(holderName = null, month = null)
+        buildSession()
+        session.start()
+
+        val load = runBlocking { session.loadPasses() }
+
+        assertEquals(PassStatus.Error, load.passes.status)
+        assertEquals(CrownStatus.Ready, load.crown.status)
+        assertEquals(null, load.crown.holderName)
     }
 }
