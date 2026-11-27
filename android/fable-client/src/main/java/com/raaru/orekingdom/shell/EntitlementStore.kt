@@ -164,6 +164,8 @@ class EntitlementStore(
 
     private val mutex = Mutex()
     private var channels: List<ChannelDto> = emptyList()
+    /** Ids dropped by a fail-closed clear whose unsubscribe is still owed (refetch failed). */
+    private var pendingGone: Set<String> = emptySet()
     private var unread: Map<String, Int> = emptyMap()
     private var loaded = false
     private var failed = false
@@ -222,7 +224,12 @@ class EntitlementStore(
         failed = false
         publish() // composers follow the new capability set immediately
         val before = channels
-        if (fromPush) channels = emptyList() // fail-closed: a failed refetch leaves absence, not stale gated channels
+        if (fromPush) {
+            // fail-closed: a failed refetch leaves absence, not stale gated channels;
+            // the dropped ids stay owed an unsubscribe until a refetch succeeds.
+            pendingGone = pendingGone + before.map { it.id }
+            channels = emptyList()
+        }
         val fresh = attempt { transport.getChannels() }
         if (fresh == null) {
             retrySoon = true
@@ -231,7 +238,8 @@ class EntitlementStore(
             return
         }
         val freshIds = fresh.map { it.id }.toSet()
-        val gone = before.map { it.id }.filterNot { it in freshIds }
+        val gone = (pendingGone + before.map { it.id }).filterNot { it in freshIds }
+        pendingGone = emptySet()
         if (gone.isNotEmpty()) attempt { transport.unsubscribe(gone) }
         channels = fresh
         loaded = true
