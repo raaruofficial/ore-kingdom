@@ -5,6 +5,7 @@
 // Run: node test.mjs   (exit 0 = all pass)
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import net from "node:net";
 import crypto from "node:crypto";
 
@@ -588,6 +589,80 @@ try {
   const restoredEnt = await get("/api/entitlements", "u_host");
   ok(restoredEnt.body.role === "member" && restoredEnt.body.capabilities.post.length > 0,
     "lapse edge: restored entitlements read is member again");
+
+
+  // 16 — shared contract fixtures (DeepSeek programme item 4): the golden
+  // frames in fixtures/frames.json are the wire contract. Every entry must
+  // be self-consistent, and every server-emitted frame type must match the
+  // fixture's key sets exactly, so the two sides cannot drift silently.
+  // (Runs after section 17 in file order; section 15's bulk sends are what
+  // make the resync case below deterministic.)
+  const fixtureDoc = JSON.parse(readFileSync(new URL("./fixtures/frames.json", import.meta.url), "utf8"));
+  const fixtureByName = new Map(fixtureDoc.frames.map((e) => [e.name, e]));
+  const keySet = (o) => Object.keys(o ?? {}).sort().join(",");
+  for (const e of fixtureDoc.frames) {
+    ok(keySet(e.frame) === e.envelope_keys.join(",") && keySet(e.frame.payload) === e.payload_keys.join(","),
+      `fixtures: ${e.name} declares its own key sets honestly`);
+  }
+  const shapeIs = (liveFrame, name) => {
+    const e = fixtureByName.get(name);
+    return keySet(liveFrame) === e.envelope_keys.join(",") && keySet(liveFrame.payload) === e.payload_keys.join(",");
+  };
+
+  const fx = await new WsTest().connect("u_host");
+  const fxObs = await new WsTest().connect("u_mod");
+  fxObs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  const snapFrame = await fxObs.waitFor((f) => f.type === "presence", "fixture presence snapshot");
+  ok(shapeIs(snapFrame, "presence") && keySet(snapFrame.payload.presence) === fixtureByName.get("presence").presence_keys.join(","),
+    "fixtures: live presence frame matches the golden shape");
+
+  // The golden client send frame, sent verbatim, is acked in golden shape.
+  const goldenSend = fixtureByName.get("send").frame;
+  fx.send(goldenSend);
+  const fxAck = await fx.waitFor((f) => f.type === "ack" && f.payload.for_id === goldenSend.id, "fixture send ack");
+  ok(shapeIs(fxAck, "ack"), "fixtures: live ack matches the golden shape");
+  const fxMsg = await fxObs.waitFor((f) => f.type === "message" && f.payload.message.id === fxAck.payload.message_id, "fixture broadcast");
+  ok(shapeIs(fxMsg, "message") && keySet(fxMsg.payload.message) === fixtureByName.get("message").message_keys.join(","),
+    "fixtures: live message frame + nested message match the golden shape");
+  const fxMid = fxAck.payload.message_id;
+
+  fx.send({ type: "react", channel_id: "ch_general", payload: { message_id: fxMid, emoji: "🔥", op: "add" } });
+  const fxReact = await fxObs.waitFor((f) => f.type === "reaction" && f.payload.message_id === fxMid, "fixture reaction");
+  ok(shapeIs(fxReact, "reaction"), "fixtures: live reaction frame matches the golden shape");
+
+  fx.send({ type: "typing", channel_id: "ch_general", payload: { state: "start" } });
+  const fxTyping = await fxObs.waitFor((f) => f.type === "typing" && f.payload.user_id === "u_host", "fixture typing relay");
+  ok(shapeIs(fxTyping, "typing (server relay)"), "fixtures: live typing relay matches the golden shape");
+
+  fx.send({ type: "edit", channel_id: "ch_general", payload: { message_id: fxMid, body: "fixture edited" } });
+  const fxUpd = await fxObs.waitFor((f) => f.type === "message.update" && f.payload.message.id === fxMid, "fixture update");
+  ok(shapeIs(fxUpd, "message.update") && keySet(fxUpd.payload.message) === fixtureByName.get("message.update").message_keys.join(","),
+    "fixtures: live message.update matches the golden shape");
+
+  fx.send({ type: "send", id: "c_fixture_err", channel_id: "ch_announcements", payload: { body: "cannot post" } });
+  const fxErr = await fx.waitFor((f) => f.type === "error" && f.payload.for_id === "c_fixture_err", "fixture error");
+  ok(shapeIs(fxErr, "error"), "fixtures: live error frame matches the golden shape");
+
+  fx.send({ type: "delete", channel_id: "ch_general", payload: { message_id: fxMid } });
+  const fxDel = await fxObs.waitFor((f) => f.type === "message.delete" && f.payload.message_id === fxMid, "fixture delete");
+  ok(shapeIs(fxDel, "message.delete"), "fixtures: live message.delete matches the golden shape");
+
+  await post("/api/dev/lapse", { user_id: "u_host" }, "u_host");
+  const fxRole = await fx.waitFor((f) => f.type === "role.update", "fixture role.update");
+  const roleFx = fixtureByName.get("role.update");
+  ok(shapeIs(fxRole, "role.update") &&
+    keySet(fxRole.payload.entitlements) === roleFx.entitlements_keys.join(",") &&
+    keySet(fxRole.payload.entitlements.capabilities) === roleFx.capability_keys.join(",") &&
+    keySet(fxRole.payload.channels[0]) === roleFx.channel_keys.join(","),
+    "fixtures: live role.update + nested shapes match the golden shape");
+  await post("/api/dev/restore", { user_id: "u_host" }, "u_host");
+  await fx.waitFor((f) => f.type === "role.update" && f.payload.entitlements.role === "member", "fixture restore push");
+
+  fx.send({ type: "resume", payload: { last_seq: { ch_help_desk: 0 } } });
+  const fxResync = await fx.waitFor((f) => f.type === "resync" && f.payload.channel_id === "ch_help_desk", "fixture resync");
+  ok(shapeIs(fxResync, "resync"), "fixtures: live resync frame matches the golden shape");
+  fx.close();
+  fxObs.close();
 
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
