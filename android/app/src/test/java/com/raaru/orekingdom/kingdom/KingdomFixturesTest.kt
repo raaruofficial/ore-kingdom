@@ -34,7 +34,10 @@ class KingdomFixturesTest {
         return (0 until frames.length()).map { frames.getJSONObject(it) }
     }
 
-    private fun JSONObject.keySet(): List<String> {
+    // Named sortedKeys, NOT keySet: org.json's JSONObject has a member
+    // keySet() returning Set<String>, which shadows an extension of the
+    // same name — a List-vs-Set assertEquals then fails on every entry.
+    private fun JSONObject.sortedKeys(): List<String> {
         val out = ArrayList<String>()
         val keys = keys()
         while (keys.hasNext()) out += keys.next()
@@ -46,40 +49,25 @@ class KingdomFixturesTest {
         return (0 until array.length()).map { array.getString(it) }
     }
 
-    private fun checkEntry(name: String) {
-        val entry = entries().first { it.getString("name") == name }
-        val frame = entry.getJSONObject("frame")
-        assertEquals(
-            "envelope keys of $name",
-            declared(entry, "envelope_keys"),
-            frame.keySet(),
-        )
-        assertEquals(
-            "payload keys of $name",
-            declared(entry, "payload_keys"),
-            frame.getJSONObject("payload").keySet(),
-        )
+    @Test
+    fun everyFixtureDeclaresItsOwnKeySetsHonestly() {
+        val entries = entries()
+        assertEquals(19, entries.size)
+        entries.forEach { entry ->
+            val frame = entry.getJSONObject("frame")
+            val name = entry.getString("name")
+            assertEquals(
+                "envelope keys of $name",
+                declared(entry, "envelope_keys"),
+                frame.sortedKeys(),
+            )
+            assertEquals(
+                "payload keys of $name",
+                declared(entry, "payload_keys"),
+                frame.getJSONObject("payload").sortedKeys(),
+            )
+        }
     }
-
-    @Test fun fixture_00() = checkEntry("ack")
-    @Test fun fixture_01() = checkEntry("message")
-    @Test fun fixture_02() = checkEntry("message.update")
-    @Test fun fixture_03() = checkEntry("message.delete")
-    @Test fun fixture_04() = checkEntry("reaction")
-    @Test fun fixture_05() = checkEntry("presence")
-    @Test fun fixture_06() = checkEntry("role.update")
-    @Test fun fixture_07() = checkEntry("error")
-    @Test fun fixture_08() = checkEntry("resync")
-    @Test fun fixture_09() = checkEntry("typing (server relay)")
-    @Test fun fixture_10() = checkEntry("subscribe")
-    @Test fun fixture_11() = checkEntry("unsubscribe")
-    @Test fun fixture_12() = checkEntry("resume")
-    @Test fun fixture_13() = checkEntry("send")
-    @Test fun fixture_14() = checkEntry("edit")
-    @Test fun fixture_15() = checkEntry("delete")
-    @Test fun fixture_16() = checkEntry("react")
-    @Test fun fixture_17() = checkEntry("typing")
-    @Test fun fixture_18() = checkEntry("presence.set")
 
     @Test
     fun serverGoldenFramesDecodeWithProductionDecoders() {
@@ -126,10 +114,10 @@ class KingdomFixturesTest {
                 replyTo = send.getJSONObject("payload").getString("reply_to"),
             ),
         )
-        assertEquals(send.keySet(), rebuiltSend.keySet())
+        assertEquals(send.sortedKeys(), rebuiltSend.sortedKeys())
         assertEquals(
-            send.getJSONObject("payload").keySet(),
-            rebuiltSend.getJSONObject("payload").keySet(),
+            send.getJSONObject("payload").sortedKeys(),
+            rebuiltSend.getJSONObject("payload").sortedKeys(),
         )
 
         val subscribe = byName.getValue("subscribe").getJSONObject("frame")
@@ -137,10 +125,10 @@ class KingdomFixturesTest {
         val rebuiltSubscribe = JSONObject(
             KingdomJson.subscribeFrame((0 until ids.length()).map { ids.getString(it) }),
         )
-        assertEquals(subscribe.keySet(), rebuiltSubscribe.keySet())
+        assertEquals(subscribe.sortedKeys(), rebuiltSubscribe.sortedKeys())
         assertEquals(
-            subscribe.getJSONObject("payload").keySet(),
-            rebuiltSubscribe.getJSONObject("payload").keySet(),
+            subscribe.getJSONObject("payload").sortedKeys(),
+            rebuiltSubscribe.getJSONObject("payload").sortedKeys(),
         )
 
         val resume = byName.getValue("resume").getJSONObject("frame")
@@ -149,10 +137,10 @@ class KingdomFixturesTest {
         val rebuiltResume = JSONObject(
             KingdomJson.resumeFrame(mapOf(channelId to lastSeq.getLong(channelId))),
         )
-        assertEquals(resume.keySet(), rebuiltResume.keySet())
+        assertEquals(resume.sortedKeys(), rebuiltResume.sortedKeys())
         assertEquals(
-            resume.getJSONObject("payload").keySet(),
-            rebuiltResume.getJSONObject("payload").keySet(),
+            resume.getJSONObject("payload").sortedKeys(),
+            rebuiltResume.getJSONObject("payload").sortedKeys(),
         )
     }
 }
