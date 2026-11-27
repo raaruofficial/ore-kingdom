@@ -73,8 +73,7 @@ fun MemberListScreen(
     onRetry: () -> Unit = {},
 ) {
     val space = OreTheme.space
-    val order = remember { listOf(OrePresence.Online, OrePresence.Idle, OrePresence.Offline) }
-    val grouped = remember(state.members) { state.members.distinctBy { it.userId }.groupBy { it.presence } }
+    val groups = remember(state.members) { groupMembersByPresence(state.members) }
 
     Column(modifier = modifier.fillMaxSize().background(OreTheme.color.surface.base)) {
         Row(
@@ -104,35 +103,32 @@ fun MemberListScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = space.sm),
                 ) {
-                    order.forEach { presence ->
-                        val members = grouped[presence].orEmpty()
-                        if (members.isNotEmpty()) {
-                            item(key = "header_${presence.name}") {
-                                PresenceSectionHeader(presence = presence, count = members.size)
-                            }
-                            items(members, key = { "member_${it.userId}" }) { member ->
-                                if (onMemberSelected != null) {
-                                    MemberRow(
-                                        displayName = member.displayName,
-                                        role = member.role,
-                                        presence = member.presence,
-                                        activity = member.activity,
-                                        founding = member.founding,
-                                        moderator = member.moderator,
-                                        crown = member.crown,
-                                        onClick = { onMemberSelected(member.userId) },
-                                    )
-                                } else {
-                                    PresenceRow(
-                                        displayName = member.displayName,
-                                        role = member.role,
-                                        presence = member.presence,
-                                        activity = member.activity,
-                                        founding = member.founding,
-                                        moderator = member.moderator,
-                                        crown = member.crown,
-                                    )
-                                }
+                    groups.forEach { g ->
+                        item(key = "header_${g.presence.name}") {
+                            PresenceSectionHeader(presence = g.presence, count = g.members.size)
+                        }
+                        items(g.members, key = { "member_${it.userId}" }) { member ->
+                            if (onMemberSelected != null) {
+                                MemberRow(
+                                    displayName = member.displayName,
+                                    role = member.role,
+                                    presence = member.presence,
+                                    activity = member.activity,
+                                    founding = member.founding,
+                                    moderator = member.moderator,
+                                    crown = member.crown,
+                                    onClick = { onMemberSelected(member.userId) },
+                                )
+                            } else {
+                                PresenceRow(
+                                    displayName = member.displayName,
+                                    role = member.role,
+                                    presence = member.presence,
+                                    activity = member.activity,
+                                    founding = member.founding,
+                                    moderator = member.moderator,
+                                    crown = member.crown,
+                                )
                             }
                         }
                     }
