@@ -272,7 +272,8 @@ const server = http.createServer(async (req, res) => {
       if (!ch || !readableChannels(user).includes(ch)) return json(res, 404, { error: "not_found" });
       const beforeSeq = url.searchParams.get("before_seq");
       const threadId = url.searchParams.get("thread_id");
-      const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 200);
+      const parsedLimit = Number(url.searchParams.get("limit") ?? 50);
+      const limit = Math.min(parsedLimit > 0 ? parsedLimit : 50, 200);
       const eligible = messages
         .filter((m) => m.channel_id === channelId && (beforeSeq === null || m.seq < Number(beforeSeq)) && (threadId === null || m.thread_id === threadId))
         .sort((a, b) => a.seq - b.seq);

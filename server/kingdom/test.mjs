@@ -1082,8 +1082,9 @@ try {
     "history malformed: before_seq=abc returns a 200 empty page (NaN cursor)");
   const c53Full = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
   const c53Neg = await get("/api/history?channel_id=ch_general&limit=-5", "u_host");
-  ok(c53Neg.body.messages.length === c53Full.body.messages.length - 5 && c53Neg.body.messages[0].seq === c53Full.body.messages[5].seq,
-    "history malformed: limit=-5 returns the eligible list minus its first five (finding: no default fallback)");
+  const c53Default = await get("/api/history?channel_id=ch_general", "u_host");
+  ok(c53Neg.body.messages.length === c53Default.body.messages.length && c53Neg.body.messages[0].seq === c53Default.body.messages[0].seq,
+    "history malformed: limit=-5 falls back to the default page instead of slicing the eligible list");
 
   const c54Sock = await new WsTest().connect("u_free");
   c54Sock.send({ type: "subscribe", payload: { channel_ids: [] } });
