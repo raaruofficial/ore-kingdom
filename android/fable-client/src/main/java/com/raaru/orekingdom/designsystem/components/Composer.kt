@@ -198,5 +198,7 @@ private fun rememberCountdown(seconds: Int, onElapsed: () -> Unit): Int {
     return remaining
 }
 
-internal fun formatCountdown(seconds: Int): String =
-    "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
+internal fun formatCountdown(seconds: Int): String {
+    val clamped = seconds.coerceAtLeast(0)
+    return "${clamped / 60}:${(clamped % 60).toString().padStart(2, '0')}"
+}

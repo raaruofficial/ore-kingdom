@@ -90,7 +90,7 @@ object SlowmodeMath {
         if (slowmodeSec <= 0) return 0
         val elapsedSeconds = (nowMs - lastAckAtMs) / 1000L
         val remaining = slowmodeSec.toLong() - elapsedSeconds
-        return remaining.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+        return remaining.coerceIn(0L, slowmodeSec.toLong()).toInt()
     }
 }
 

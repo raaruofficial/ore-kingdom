@@ -37,7 +37,7 @@ class ComposerCountdownTest {
     }
 
     @Test
-    fun negativeSecondsKeepCurrentTruth() {
-        assertEquals("0:-1", formatCountdown(-1))
+    fun negativeSecondsClampToZero() {
+        assertEquals("0:00", formatCountdown(-1))
     }
 }
