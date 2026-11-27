@@ -1,0 +1,145 @@
+package com.raaru.orekingdom.modules.pump
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import com.raaru.orekingdom.designsystem.components.OrePrimaryButton
+import com.raaru.orekingdom.designsystem.components.OreText
+import com.raaru.orekingdom.designsystem.tokens.OreTheme
+
+internal object PumpStatesCopy {
+    const val ERROR_TITLE = "THE PUMP could not be loaded"
+    const val ERROR_BODY = "Check your connection and try again."
+    const val RETRY = "Retry"
+    const val PREVIEW_TITLE = "THE PUMP is in preview"
+    const val PREVIEW_BODY = "You can look around: your fleet, day bank and ATM status are shown for information."
+    const val SKELETON_PANEL_ROWS = 3
+    const val SKELETON_WALLETS = 3
+}
+
+/** Loading shapes for the console: title bar, day-bank panel, ATM panel, fleet header, wallet cards. */
+@Composable
+fun PumpSkeleton(modifier: Modifier = Modifier) {
+    val space = OreTheme.space
+    Column(modifier = modifier.fillMaxSize().background(OreTheme.color.surface.base)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(OreTheme.color.surface.raised)
+                .padding(horizontal = space.md, vertical = space.sm),
+        ) { PumpSkeletonBar(fraction = 0.3f, tall = true) }
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(space.md),
+            verticalArrangement = Arrangement.spacedBy(space.sm),
+        ) {
+            PumpSkeletonCard {
+                PumpSkeletonBar(fraction = 0.2f)
+                repeat(PumpStatesCopy.SKELETON_PANEL_ROWS) { PumpSkeletonBar(fraction = if (it % 2 == 0) 0.7f else 0.45f) }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(OreTheme.size.buttonHeight)
+                        .background(OreTheme.color.surface.highlight),
+                )
+            }
+            PumpSkeletonCard {
+                PumpSkeletonBar(fraction = 0.15f)
+                PumpSkeletonBar(fraction = 0.5f)
+            }
+            PumpSkeletonBar(fraction = 0.2f)
+            repeat(PumpStatesCopy.SKELETON_WALLETS) {
+                PumpSkeletonCard {
+                    PumpSkeletonBar(fraction = 0.4f)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PumpSkeletonBar(fraction = 0.25f)
+                    }
+                    PumpSkeletonBar(fraction = 0.3f)
+                }
+            }
+        }
+    }
+}
+
+/** Console error with retry. Fixed copy only — no raw error string is passed in or rendered. */
+@Composable
+fun PumpError(
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val space = OreTheme.space
+    Box(
+        modifier = modifier.fillMaxSize().background(OreTheme.color.surface.base).padding(space.lg),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().background(OreTheme.color.surface.raised).padding(space.lg),
+            verticalArrangement = Arrangement.spacedBy(space.sm),
+        ) {
+            OreText(text = PumpStatesCopy.ERROR_TITLE, style = OreTheme.type.titleSmall, color = OreTheme.color.text.primary)
+            OreText(text = PumpStatesCopy.ERROR_BODY, style = OreTheme.type.body, color = OreTheme.color.text.secondary)
+            OrePrimaryButton(text = PumpStatesCopy.RETRY, onClick = onRetry)
+        }
+    }
+}
+
+/**
+ * Preview-flag informational surface: states that the module is in preview and that action
+ * controls are disabled. It carries no action control of its own.
+ */
+@Composable
+fun PumpPreviewNote(modifier: Modifier = Modifier) {
+    val space = OreTheme.space
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(OreTheme.color.status.info.container)
+            .padding(space.md),
+        verticalArrangement = Arrangement.spacedBy(space.xs),
+    ) {
+        OreText(
+            text = PumpStatesCopy.PREVIEW_TITLE,
+            style = OreTheme.type.bodyStrong,
+            color = OreTheme.color.status.info.content,
+        )
+        OreText(
+            text = PumpStatesCopy.PREVIEW_BODY,
+            style = OreTheme.type.body,
+            color = OreTheme.color.status.info.content,
+        )
+        OreText(
+            text = PumpConsoleCopy.PREVIEW_NOTE,
+            style = OreTheme.type.caption,
+            color = OreTheme.color.status.info.content,
+        )
+    }
+}
+
+@Composable
+private fun PumpSkeletonCard(content: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(OreTheme.color.surface.raised)
+            .padding(OreTheme.space.md),
+        verticalArrangement = Arrangement.spacedBy(OreTheme.space.sm),
+    ) { content() }
+}
+
+@Composable
+private fun PumpSkeletonBar(fraction: Float, tall: Boolean = false) {
+    Box(
+        Modifier
+            .fillMaxWidth(fraction)
+            .height(if (tall) OreTheme.space.lg else OreTheme.space.md)
+            .background(OreTheme.color.surface.highlight),
+    )
+}

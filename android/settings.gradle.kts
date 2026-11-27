@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "ore-kingdom"
 include(":app")
+
+include(":fable-client")
