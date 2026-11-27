@@ -112,6 +112,9 @@ class KingdomTransport(
     private val baseUrl: String,
     private val sessionToken: () -> String? = { null },
     private val walletAddress: () -> String? = { null },
+    /** S-SEAM-1: how a connection is opened for a URL. Production behaviour is
+     * the platform default; tests inject a fake connection (Q-26). */
+    private val connectionFactory: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
 ) : ShellTransport {
 
     private val _entitlementPushes = MutableSharedFlow<EntitlementPush>(extraBufferCapacity = 64)
@@ -185,7 +188,7 @@ class KingdomTransport(
     /** Writes one raw frame; false when the socket is down (callers treat sends as retryable). */
     fun sendRaw(frame: String): Boolean = wsClient?.send(frame) ?: false
 
-    private fun dispatch(text: String) {
+    internal fun dispatch(text: String) {
         val envelope = try {
             JSONObject(text)
         } catch (_: Exception) {
@@ -206,13 +209,15 @@ class KingdomTransport(
                         _entitlementPushes.tryEmit(EntitlementPush(parsed, channels))
                     }
             }
-            "ack" -> _frames.tryEmit(
-                KingdomInbound.Ack(
-                    forId = payload.getString("for_id"),
-                    messageId = payload.getString("message_id"),
-                    seq = payload.getLong("seq"),
-                ),
-            )
+            "ack" -> runCatching {
+                _frames.tryEmit(
+                    KingdomInbound.Ack(
+                        forId = payload.getString("for_id"),
+                        messageId = payload.getString("message_id"),
+                        seq = payload.getLong("seq"),
+                    ),
+                )
+            }
             "message" -> payload.optJSONObject("message")?.let {
                 runCatching { KingdomJson.parseMessage(it) }
                     .onSuccess { m -> _frames.tryEmit(KingdomInbound.Message(m)) }
@@ -221,13 +226,15 @@ class KingdomTransport(
                 runCatching { KingdomJson.parseMessage(it) }
                     .onSuccess { m -> _frames.tryEmit(KingdomInbound.MessageUpdate(m)) }
             }
-            "message.delete" -> _frames.tryEmit(
-                KingdomInbound.MessageDelete(
-                    channelId = payload.getString("channel_id"),
-                    messageId = payload.getString("message_id"),
-                    seq = payload.getLong("seq"),
-                ),
-            )
+            "message.delete" -> runCatching {
+                _frames.tryEmit(
+                    KingdomInbound.MessageDelete(
+                        channelId = payload.getString("channel_id"),
+                        messageId = payload.getString("message_id"),
+                        seq = payload.getLong("seq"),
+                    ),
+                )
+            }
             "reaction" -> _frames.tryEmit(
                 KingdomInbound.Reaction(
                     channelId = envelope.optStringOrNull("channel_id"),
@@ -241,12 +248,14 @@ class KingdomTransport(
                 runCatching { KingdomJson.parsePresence(it) }
                     .onSuccess { p -> _frames.tryEmit(KingdomInbound.Presence(p)) }
             }
-            "resync" -> _frames.tryEmit(
-                KingdomInbound.Resync(
-                    channelId = payload.getString("channel_id"),
-                    reason = payload.optString("reason", "gap"),
-                ),
-            )
+            "resync" -> runCatching {
+                _frames.tryEmit(
+                    KingdomInbound.Resync(
+                        channelId = payload.getString("channel_id"),
+                        reason = payload.optString("reason", "gap"),
+                    ),
+                )
+            }
             "error" -> _frames.tryEmit(
                 KingdomInbound.Error(
                     forId = payload.optStringOrNull("for_id"),
@@ -527,7 +536,7 @@ class KingdomTransport(
     }
 
     private fun openConnection(path: String, method: String): HttpURLConnection =
-        (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+        connectionFactory(URL(baseUrl.trimEnd('/') + path)).apply {
             requestMethod = method
             connectTimeout = 10_000
             readTimeout = 15_000
