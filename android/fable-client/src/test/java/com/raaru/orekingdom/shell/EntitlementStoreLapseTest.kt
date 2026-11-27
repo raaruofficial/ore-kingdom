@@ -287,4 +287,24 @@ class EntitlementStoreLapseTest {
         runBlocking { withTimeout(5_000) { s.rail.first { r -> r.lastVisitedChannelId == null && r.categories.flatMap { it.channels }.none { it.id == "ch_general" } } } }
         assertEquals(null, s.rail.value.lastVisitedChannelId)
     }
+
+    @Test
+    fun selectingAModuleChannelDoesNotSetLastVisited() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        s.selectChannel("ch_pump")
+        assertEquals(null, s.rail.value.lastVisitedChannelId)
+        s.selectChannel("ch_general")
+        assertEquals("ch_general", s.rail.value.lastVisitedChannelId)
+    }
+
+    @Test
+    fun negativeUnreadCoercesToZero() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        s.setUnread("ch_general", -4)
+        assertEquals(0, s.rail.value.categories.flatMap { it.channels }.first { it.id == "ch_general" }.unreadCount)
+        s.setUnread("ch_general", 7)
+        assertEquals(7, s.rail.value.categories.flatMap { it.channels }.first { it.id == "ch_general" }.unreadCount)
+    }
 }
