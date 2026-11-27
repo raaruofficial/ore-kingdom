@@ -951,6 +951,140 @@ try {
     "send edge: the ghost-thread message lands in history and the thread list is untouched");
   q40Host.close();
 
+  // 20 — REST + WS behaviour pins, third wave (DeepSeek full-spend
+  // programme tranche 4, Cluster E/F): read shapes, moderation
+  // branches, and malformed-input truths the earlier waves did not
+  // pin. C-48 is not here: section 17 already pins duplicate
+  // reports (see the tranche-4 scorecard).
+  const freeChannels = await get("/api/channels", "u_free");
+  ok(freeChannels.body.channels.every((c) => Object.keys(c).sort().join(",") === "category,id,kind,min_role_post,min_role_read,name,position,slowmode_sec"),
+    "channels shape: every channel object carries exactly the eight contract keys");
+  ok(freeChannels.body.channels.some((c) => c.id === "ch_pump" && c.kind === "module") && freeChannels.body.channels.some((c) => c.id === "ch_nightshift" && c.kind === "module"),
+    "channels shape: a free caller's list includes both module channels");
+  ok(freeChannels.body.channels.find((c) => c.id === "ch_announcements")?.min_role_post === "house",
+    "channels shape: announcements is house-posted in the free caller's list");
+
+  const modEnt = await get("/api/entitlements", "u_mod");
+  ok(modEnt.body.capabilities.mod_loft === true, "mod entitlements: the seeded moderator holds mod_loft");
+  ok(modEnt.body.founding === true && modEnt.body.role === "member", "mod entitlements: founding member role");
+  ok(JSON.stringify(modEnt.body.capabilities.post) === JSON.stringify(["ch_general", "ch_introductions", "ch_help_desk", "ch_strategy", "ch_town_square_tips"]),
+    "mod entitlements: post list is the member postable text set, announcements excluded");
+  ok(modEnt.body.modules.pump === "on" && modEnt.body.modules.nightshift === "preview",
+    "mod entitlements: modules are pump on, nightshift preview");
+
+  const pumpFree = await get("/api/modules/pump", "u_free");
+  ok(pumpFree.status === 200 && pumpFree.body.wallets.length === 2 && pumpFree.body.wallets[0].address_short === "HoSt…1111" && pumpFree.body.wallets[1].address_short === "MiNe…2222",
+    "pump free: the free caller reads both seeded wallets verbatim");
+  ok(pumpFree.body.day_bank.banked_days === 2 && pumpFree.body.day_bank.active_remaining_seconds === null && pumpFree.body.day_bank.first_day_free === true,
+    "pump free: day_bank is 2 banked, none active, first day free");
+  ok(pumpFree.body.atm.state === "locked", "pump free: the ATM is locked for a free caller");
+
+  const c47Hist = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  const c47Msg = c47Hist.body.messages.find((m) => m.author_id === "u_free");
+  const c47Post = await post("/api/reports", { target_kind: "message", target_id: c47Msg.id, note: "c47 no reason" }, "u_host");
+  ok(c47Post.status === 200, "report defaults: a report with no reason field is accepted");
+  const c47Queue = await get("/api/mod/queue", "u_mod");
+  const c47Item = c47Queue.body.items.filter((i) => i.snapshot.body === c47Msg.body && i.state === "open" && !i.appeal).at(-1);
+  ok(c47Item.reason === "other" && c47Item.reporter_count === 1 && c47Item.claimed_by === null && Array.isArray(c47Item.author_history) && c47Item.author_history.length === 0,
+    "report defaults: the item lands with reason other, one reporter, unclaimed, empty author history");
+
+  const c45Hist = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  const c45Msg = c45Hist.body.messages.find((m) => m.author_id === "u_free");
+  await post("/api/reports", { target_kind: "message", target_id: c45Msg.id, reason: "spam", note: "c45 close me" }, "u_host");
+  const c45Queue1 = await get("/api/mod/queue", "u_mod");
+  const c45Item = c45Queue1.body.items.filter((i) => i.snapshot.body === c45Msg.body && i.state === "open" && !i.appeal).at(-1);
+  const c45Act = await post("/api/mod/action", { report_id: c45Item.report_id, action: "content_removed", reason_code: "spam", note: "c45", override_claim: false }, "u_mod");
+  ok(c45Act.status === 200, "mod queue: the closing action succeeds");
+  const c45Queue2 = await get("/api/mod/queue", "u_mod");
+  const c45Closed = c45Queue2.body.items.find((i) => i.report_id === c45Item.report_id);
+  ok(!!c45Closed && c45Closed.state === "closed", "mod queue: a closed item is still listed, with state closed");
+  ok(c45Queue2.body.items.every((i) => Object.keys(i).sort().join(",") === "appeal,author_history,claimed_by,reason,report_id,reporter_count,snapshot,state"),
+    "mod queue: every listed item carries exactly the eight item keys");
+
+  const c46Log1 = await get("/api/mod/log", "u_mod");
+  ok(c46Log1.body.entries.every((e) => Object.keys(e).sort().join(",") === "action,actor_id,at,reason,target_id"),
+    "mod log: every entry carries exactly the five entry keys");
+  ok(c46Log1.body.entries[0].actor_id === "u_mod" && c46Log1.body.entries[0].action === "mute" && c46Log1.body.entries[0].target_id === "u_spammer" && c46Log1.body.entries[0].reason === "spam",
+    "mod log: the seeded entry is first");
+  const c46Hist = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  const c46Msg = c46Hist.body.messages.find((m) => m.author_id === "u_free");
+  await post("/api/reports", { target_kind: "message", target_id: c46Msg.id, reason: "spam", note: "c46 log order" }, "u_host");
+  const c46Queue = await get("/api/mod/queue", "u_mod");
+  const c46Item = c46Queue.body.items.filter((i) => i.snapshot.body === c46Msg.body && i.state === "open" && !i.appeal).at(-1);
+  await post("/api/mod/action", { report_id: c46Item.report_id, action: "mute", reason_code: "spam", note: "c46", override_claim: false, duration_sec: 60 }, "u_mod");
+  const c46Log2 = await get("/api/mod/log", "u_mod");
+  const c46Last = c46Log2.body.entries.at(-1);
+  ok(c46Log2.body.entries.length === c46Log1.body.entries.length + 1 && c46Last.actor_id === "u_mod" && c46Last.action === "mute" && c46Last.target_id === "u_free" && c46Last.reason === "spam",
+    "mod log: a new action's entry is appended last, in order");
+
+  const c50Hist = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  const c50Msg = c50Hist.body.messages.find((m) => m.author_id === "u_free");
+  await post("/api/reports", { target_kind: "message", target_id: c50Msg.id, reason: "spam", note: "c50 slowmode" }, "u_host");
+  const c50Queue = await get("/api/mod/queue", "u_mod");
+  const c50Item = c50Queue.body.items.filter((i) => i.snapshot.body === c50Msg.body && i.state === "open" && !i.appeal).at(-1);
+  const c50Watch = await new WsTest().connect("u_free");
+  c50Watch.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await c50Watch.waitFor((f) => f.type === "presence", "c50 watch ready");
+  const c50PushBase = c50Watch.count((f) => f.type === "role.update");
+  const c50Act = await post("/api/mod/action", { report_id: c50Item.report_id, action: "slowmode", reason_code: "spam", note: "c50", override_claim: false, duration_sec: 1800 }, "u_mod");
+  ok(c50Act.status === 200, "mod action slowmode: the action succeeds");
+  await new Promise((r) => setTimeout(r, 250));
+  ok(c50Watch.count((f) => f.type === "role.update") === c50PushBase, "mod action slowmode: no role.update push fires for the author");
+  c50Watch.close();
+  const c50Sanctions = await get("/api/sanctions", "u_free");
+  ok(c50Sanctions.body.sanctions.some((s) => s.rung === "slowmode" && s.duration_sec === 1800),
+    "mod action slowmode: the author gains a slowmode sanction with the dictated duration");
+  const c50Queue2 = await get("/api/mod/queue", "u_mod");
+  const c50Log = await get("/api/mod/log", "u_mod");
+  ok(c50Queue2.body.items.find((i) => i.report_id === c50Item.report_id)?.state === "closed" && c50Log.body.entries.at(-1).action === "slowmode",
+    "mod action slowmode: the item closes and the log records action slowmode");
+
+  const c49Hist = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  const c49Msg = c49Hist.body.messages.find((m) => m.author_id === "u_free");
+  await post("/api/reports", { target_kind: "message", target_id: c49Msg.id, reason: "spam", note: "c49 reduced" }, "u_host");
+  const c49Queue = await get("/api/mod/queue", "u_mod");
+  const c49Item = c49Queue.body.items.filter((i) => i.snapshot.body === c49Msg.body && i.state === "open" && !i.appeal).at(-1);
+  await post("/api/mod/action", { report_id: c49Item.report_id, action: "mute", reason_code: "spam", note: "c49", override_claim: false, duration_sec: 3601 }, "u_mod");
+  const c49Sanctions = await get("/api/sanctions", "u_free");
+  const c49Sanction = c49Sanctions.body.sanctions.filter((s) => s.rung === "mute" && s.duration_sec === 3601).at(-1);
+  ok(!!c49Sanction, "appeal reduced: the setup sanction exists");
+  await post("/api/appeals", { sanction_id: c49Sanction.sanction_id, statement: "c49 appeal" }, "u_free");
+  const c49Queue2 = await get("/api/mod/queue", "u_mod");
+  const c49AppealItem = c49Queue2.body.items.find((i) => i.appeal && i.snapshot.body === "c49 appeal" && i.state === "open");
+  const c49Decide = await post("/api/mod/appeal", { report_id: c49AppealItem.report_id, outcome: "reduced", reason_code: "spam", note: "", override_claim: false }, "u_mod");
+  ok(c49Decide.status === 200, "appeal reduced: the reduced decision succeeds");
+  const c49After = await get("/api/sanctions", "u_free");
+  ok(c49After.body.sanctions.some((s) => s.sanction_id === c49Sanction.sanction_id && s.duration_sec === 3601 && s.appeal.state === "reduced"),
+    "appeal reduced: the sanction survives with appeal state reduced");
+  const c49Queue3 = await get("/api/mod/queue", "u_mod");
+  const c49Log = await get("/api/mod/log", "u_mod");
+  ok(c49Queue3.body.items.find((i) => i.report_id === c49AppealItem.report_id)?.state === "closed" && c49Log.body.entries.at(-1).action === "appeal_reduced",
+    "appeal reduced: the item closes and the log gains appeal_reduced");
+
+  const c51LapseUnknown = await post("/api/dev/lapse", { user_id: "u_ghost" }, "u_host");
+  ok(c51LapseUnknown.status === 404 && c51LapseUnknown.body.error === "not_found", "dev hooks: lapse of an unknown user is 404 not_found");
+  const c51RestoreUnknown = await post("/api/dev/restore", { user_id: "u_ghost" }, "u_host");
+  ok(c51RestoreUnknown.status === 404 && c51RestoreUnknown.body.error === "not_found", "dev hooks: restore of an unknown user is 404 not_found");
+  await post("/api/dev/lapse", { user_id: "u_free" }, "u_host");
+  const c51Again = await post("/api/dev/lapse", { user_id: "u_free" }, "u_host");
+  ok(c51Again.status === 200, "dev hooks: lapsing an already lapsed user is 200 (idempotent)");
+  await post("/api/dev/restore", { user_id: "u_free" }, "u_host");
+
+  const c52Clamped = await get("/api/history?channel_id=ch_help_desk&limit=500", "u_host");
+  const c52Max = await get("/api/history?channel_id=ch_help_desk&limit=200", "u_host");
+  ok(c52Clamped.body.messages.length === 200 && c52Max.body.messages.length === 200,
+    "history clamp: limit=500 returns the same 200-message ceiling as limit=200");
+  ok(c52Clamped.body.messages[0].seq === c52Max.body.messages[0].seq && c52Clamped.body.messages.at(-1).seq === c52Max.body.messages.at(-1).seq,
+    "history clamp: the clamped page is identical, first and last seq");
+
+  const c53Bad = await get("/api/history?channel_id=ch_general&before_seq=abc", "u_host");
+  ok(c53Bad.status === 200 && c53Bad.body.messages.length === 0 && c53Bad.body.has_more === false,
+    "history malformed: before_seq=abc returns a 200 empty page (NaN cursor)");
+  const c53Full = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const c53Neg = await get("/api/history?channel_id=ch_general&limit=-5", "u_host");
+  ok(c53Neg.body.messages.length === c53Full.body.messages.length - 5 && c53Neg.body.messages[0].seq === c53Full.body.messages[5].seq,
+    "history malformed: limit=-5 returns the eligible list minus its first five (finding: no default fallback)");
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
