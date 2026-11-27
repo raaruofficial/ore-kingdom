@@ -659,6 +659,7 @@ function handleClientFrame(sock, text) {
     case "edit": {
       const m = messages.find((x) => x.id === payload.message_id && x.channel_id === channelId);
       if (!m || m.author_id !== user.id) { sock.send(errorFrame(null, "not_entitled", "own messages only")); return; }
+      if (m.deleted_at) { sock.send(errorFrame(null, "message_deleted", "deleted messages cannot be edited")); return; }
       m.body = String(payload.body ?? m.body);
       m.edited_at = nowIso();
       sendToChannel(channelId, (viewer) => frame("message.update", { message: messageShape(m, viewer) }, channelId));

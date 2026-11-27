@@ -1194,9 +1194,15 @@ c55Sock.close(); c55Other.close();
   c61Author.send({ type: "delete", channel_id: "ch_general", payload: { message_id: c61Ack.payload.message_id } });
   await c61Obs.waitFor((f) => f.type === "message.delete" && f.payload.message_id === c61Ack.payload.message_id, "c61 delete broadcast");
   c61Author.send({ type: "edit", channel_id: "ch_general", payload: { message_id: c61Ack.payload.message_id, body: "c61 edited corpse" } });
-  const c61Upd = await c61Obs.waitFor((f) => f.type === "message.update" && f.payload.message.id === c61Ack.payload.message_id, "c61 edit of deleted broadcast");
-  ok(c61Upd.payload.message.body === "c61 edited corpse" && c61Upd.payload.message.edited_at !== null && c61Upd.payload.message.deleted_at !== null,
-    "edit finding: editing a deleted message succeeds and broadcasts the update on the tombstone");
+  const c61Err = await c61Author.waitFor((f) => f.type === "error", "c61 edit of deleted refusal");
+  ok(c61Err.payload.code === "message_deleted", "edit guard: editing a deleted message is refused with message_deleted");
+  await new Promise((r) => setTimeout(r, 300));
+  ok(c61Obs.count((f) => f.type === "message.update" && f.payload.message.id === c61Ack.payload.message_id) === 0,
+    "edit guard: no message.update is broadcast for the tombstone");
+  const c61Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const c61Msg = c61Hist.body.messages.find((m) => m.id === c61Ack.payload.message_id);
+  ok(c61Msg.body === "c61 delete then edit" && c61Msg.edited_at === null && c61Msg.deleted_at !== null,
+    "edit guard: the tombstone keeps its original body and gains no edited_at");
   c61Author.close(); c61Obs.close();
 
   const c62Author = await new WsTest().connect("u_host");
