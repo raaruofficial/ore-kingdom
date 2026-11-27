@@ -6,9 +6,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -187,43 +188,49 @@ private fun ReactionChip(
         ),
         label = "oreReactionChipContainer",
     )
-    Row(
+    Box(
         modifier = Modifier
-            .height(OreTheme.size.reactionChipHeight)
-            .clip(shape)
-            .background(container)
-            .then(
-                if (reaction.mine) {
-                    Modifier.border(
-                        OreTheme.size.strokeHairline,
-                        colors.message.reactionChipMineBorder,
-                        shape,
-                    )
-                } else {
-                    Modifier
-                },
-            )
+            .heightIn(min = OreTheme.size.touchTarget)
             .toggleable(
                 value = reaction.mine,
                 enabled = enabled,
                 role = Role.Checkbox,
                 onValueChange = { onToggle(reaction.emoji) },
-            )
-            .padding(horizontal = OreTheme.space.sm),
-        horizontalArrangement = Arrangement.spacedBy(OreTheme.space.xs),
-        verticalAlignment = Alignment.CenterVertically,
+            ),
+        contentAlignment = Alignment.Center,
     ) {
-        OreText(
-            text = reaction.emoji,
-            style = OreTheme.type.label,
-            color = colors.text.primary,
-            maxLines = 1,
-        )
-        OreText(
-            text = reaction.count.toString(),
-            style = OreTheme.type.numeric,
-            color = if (reaction.mine) colors.accent.onSubtle else colors.text.secondary,
-            maxLines = 1,
-        )
+        Row(
+            modifier = Modifier
+                .heightIn(min = OreTheme.size.reactionChipHeight)
+                .clip(shape)
+                .background(container)
+                .then(
+                    if (reaction.mine) {
+                        Modifier.border(
+                            OreTheme.size.strokeHairline,
+                            colors.message.reactionChipMineBorder,
+                            shape,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(horizontal = OreTheme.space.sm),
+            horizontalArrangement = Arrangement.spacedBy(OreTheme.space.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OreText(
+                text = reaction.emoji,
+                style = OreTheme.type.label,
+                color = colors.text.primary,
+                maxLines = 1,
+            )
+            OreText(
+                text = reaction.count.toString(),
+                style = OreTheme.type.numeric,
+                color = if (reaction.mine) colors.accent.onSubtle else colors.text.secondary,
+                maxLines = 1,
+            )
+        }
     }
 }

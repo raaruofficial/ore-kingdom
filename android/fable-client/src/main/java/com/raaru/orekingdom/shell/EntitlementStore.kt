@@ -171,7 +171,7 @@ class EntitlementStore(
 
     fun start() {
         scope.launch {
-            transport.entitlementPushes.collect { push -> mutex.withLock { applyLocked(push) } }
+            transport.entitlementPushes.collect { push -> mutex.withLock { applyLocked(push, fromPush = true) } }
         }
         scope.launch {
             while (isActive) {
@@ -217,10 +217,12 @@ class EntitlementStore(
         }
     }
 
-    private suspend fun applyLocked(read: Entitlements) {
+    private suspend fun applyLocked(read: Entitlements, fromPush: Boolean = false) {
         _entitlements.value = read
         failed = false
         publish() // composers follow the new capability set immediately
+        val before = channels
+        if (fromPush) channels = emptyList() // fail-closed: a failed refetch leaves absence, not stale gated channels
         val fresh = attempt { transport.getChannels() }
         if (fresh == null) {
             retrySoon = true
@@ -229,7 +231,7 @@ class EntitlementStore(
             return
         }
         val freshIds = fresh.map { it.id }.toSet()
-        val gone = channels.map { it.id }.filterNot { it in freshIds }
+        val gone = before.map { it.id }.filterNot { it in freshIds }
         if (gone.isNotEmpty()) attempt { transport.unsubscribe(gone) }
         channels = fresh
         loaded = true

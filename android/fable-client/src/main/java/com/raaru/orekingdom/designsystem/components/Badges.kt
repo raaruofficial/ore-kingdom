@@ -5,7 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -52,7 +52,7 @@ internal fun OreChip(
 ) {
     Row(
         modifier = modifier
-            .height(OreTheme.size.badgeHeight)
+            .heightIn(min = OreTheme.size.badgeHeight)
             .clip(shape)
             .background(container)
             .then(
