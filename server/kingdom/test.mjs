@@ -933,8 +933,8 @@ try {
   const q39Log = await get("/api/mod/log", "u_mod");
   const freeSanctionCountAfter = (await get("/api/sanctions", "u_free")).body.sanctions.length;
   const introAfter = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
-  ok(q39Act.status === 200 && q39Closed.state === "closed" && q39Log.body.entries.some((e) => e.action === "explode" && e.target_id === "u_free"),
-    "mod-action finding: an unknown action string still closes the item and appends a mod-log entry carrying that string");
+  ok(q39Act.status === 400 && q39Act.body.error === "unknown_action" && q39Closed.state === "open" && !q39Log.body.entries.some((e) => e.action === "explode"),
+    "mod-action guard: an unknown action string is rejected, the item stays open, and no mod-log entry is written");
   ok(freeSanctionCountAfter === freeSanctionCount && introAfter.body.messages.find((m) => m.id === introMsg.id).deleted_at === null,
     "mod-action finding: an unknown action creates no sanction and tombstones nothing");
   const q40Host = await new WsTest().connect("u_host");

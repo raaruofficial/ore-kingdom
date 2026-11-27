@@ -412,6 +412,9 @@ const server = http.createServer(async (req, res) => {
       if (item.claimed_by && item.claimed_by !== user.id && !body.override_claim) {
         return json(res, 409, { error: "claimed_by_other" });
       }
+      if (!["content_removed", "slowmode", "mute", "suspension", "ban"].includes(body.action)) {
+        return json(res, 400, { error: "unknown_action" });
+      }
       const authorId = item.snapshot.author_id;
       if (body.action === "content_removed") {
         const target = messages.find((m) => m.body === item.snapshot.body && m.author_id === authorId && m.channel_id === item.snapshot.channel_id);
