@@ -3,6 +3,8 @@ package com.raaru.orekingdom.kingdom
 import com.raaru.orekingdom.passes.CrownStatus
 import com.raaru.orekingdom.passes.PassStatus
 import com.raaru.orekingdom.passes.PassRecipientUi
+import com.raaru.orekingdom.moderation.ModLogStatus
+import com.raaru.orekingdom.moderation.SanctionNoticesStatus
 import com.raaru.orekingdom.moderation.AppealState
 import com.raaru.orekingdom.moderation.ModQueueStatus
 import com.raaru.orekingdom.modules.pump.PumpAtmState
@@ -347,5 +349,86 @@ class KingdomSessionModuleTest {
         val open = state.items.first { it.reportId == "rep_4" }
         assertEquals(null, open.claimedByName)
         assertEquals(AppealState.None, open.appeal?.state)
+    }
+
+    @Test
+    fun loadModLogWithoutModLoftNeverCallsTheRead() {
+        transport = fakeTransport()
+        buildSession()
+        session.start()
+
+        val state = runBlocking { session.loadModLog(sessionEntitlements()) }
+
+        assertEquals(ModLogStatus.Ready, state.status)
+        assertFalse(state.modLoft)
+        assertTrue(state.entries.isEmpty())
+        assertEquals(0, transport.modLogCalls)
+    }
+
+    @Test
+    fun loadModLogNamesResolveAndAbsentActorIsNull() {
+        transport = fakeTransport()
+        transport.modLogRead = listOf(
+            ModLogEntryRead("u_other", "mute", "u_self", "harassment", "2026-11-27T01:00:00Z"),
+            ModLogEntryRead("u_ghost", "ban", "u_ghost", "scam", "2026-11-27T02:00:00Z"),
+        )
+        buildSession()
+        session.start()
+        val mod = sessionEntitlements().copy(
+            capabilities = sessionEntitlements().capabilities.copy(modLoft = true),
+        )
+
+        val state = runBlocking { session.loadModLog(mod) }
+
+        assertTrue(state.modLoft)
+        assertEquals(1, transport.modLogCalls)
+        val first = state.entries[0]
+        assertEquals("Other", first.actorName)
+        assertEquals("Self", first.targetName)
+        assertEquals("mute", first.action)
+        assertEquals("harassment", first.reason)
+        val second = state.entries[1]
+        assertEquals(null, second.actorName)
+        assertEquals(null, second.targetName)
+    }
+
+    @Test
+    fun loadSanctionsMapsFieldsVerbatimAndAppealStates() {
+        transport = fakeTransport()
+        transport.sanctionsRead = listOf(
+            SanctionRead("s_1", "mute", "harassment", 3600L, "pending"),
+            SanctionRead("s_2", "ban", "scam", null, "none"),
+            SanctionRead(null, "warn", "spam", 60L, "bogus-wire"),
+        )
+        buildSession()
+
+        val state = runBlocking { session.loadSanctions() }
+
+        assertEquals(SanctionNoticesStatus.Ready, state.status)
+        assertEquals(3, state.notices.size)
+        val first = state.notices[0]
+        assertEquals("s_1", first.sanctionId)
+        assertEquals("mute", first.rung)
+        assertEquals("harassment", first.reasonCategory)
+        assertEquals(3600L, first.durationSec)
+        assertEquals(AppealState.Pending, first.appeal)
+        val second = state.notices[1]
+        assertEquals(null, second.durationSec)
+        assertEquals(AppealState.None, second.appeal)
+        val third = state.notices[2]
+        assertEquals(null, third.sanctionId)
+        assertEquals(AppealState.None, third.appeal)
+    }
+
+    @Test
+    fun loadSanctionsTransportFailureIsErrorWithNoNotices() {
+        transport = fakeTransport()
+        transport.sanctionsError = RuntimeException("boom")
+        buildSession()
+
+        val state = runBlocking { session.loadSanctions() }
+
+        assertEquals(SanctionNoticesStatus.Error, state.status)
+        assertTrue(state.notices.isEmpty())
     }
 }
