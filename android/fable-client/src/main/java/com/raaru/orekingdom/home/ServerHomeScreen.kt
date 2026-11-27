@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.raaru.orekingdom.designsystem.components.CategoryHeader
@@ -62,8 +63,8 @@ fun ServerHomeScreen(
     onRetry: () -> Unit = {},
 ) {
     val space = OreTheme.space
-    val visibleModules = modules.filter { it.state != ModuleFlag.Off }
-    val categories = rail.categories.filter { it.channels.isNotEmpty() }
+    val visibleModules = remember(modules) { modules.filter { it.state != ModuleFlag.Off } }
+    val categories = remember(rail.categories) { rail.categories.filter { it.channels.isNotEmpty() } }
 
     LazyColumn(
         modifier = modifier.fillMaxSize().background(OreTheme.color.surface.base),
