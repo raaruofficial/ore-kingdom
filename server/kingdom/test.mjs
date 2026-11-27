@@ -664,6 +664,66 @@ try {
   fx.close();
   fxObs.close();
 
+  // 18 — history paging + search + routing edges (DeepSeek full-spend
+  // programme Q-11..Q-13): the limit cursor arithmetic and the
+  // fall-through shapes, pinned exactly.
+  const page1 = await get("/api/history?channel_id=ch_general&limit=1", "u_host");
+  ok(page1.status === 200 && page1.body.messages.length === 1 && page1.body.has_more === true,
+    "history edge: limit=1 returns exactly one message with has_more");
+  const page2 = await get("/api/history?channel_id=ch_general&limit=2", "u_host");
+  ok(page2.status === 200 && page2.body.messages.length === 2 && page2.body.has_more === true,
+    "history edge: limit=2 returns exactly two messages with has_more");
+  const page0 = await get("/api/history?channel_id=ch_general&before_seq=0", "u_host");
+  ok(page0.status === 200 && page0.body.messages.length === 0 && page0.body.has_more === false,
+    "history edge: before_seq=0 returns an empty page with has_more false");
+  const page200 = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const pageDefault = await get("/api/history?channel_id=ch_general&limit=0", "u_host");
+  ok(pageDefault.body.messages.length === Math.min(50, page200.body.messages.length),
+    "history edge: limit=0 falls back to the default page size of 50");
+  const readableIds = ["ch_announcements", "ch_general", "ch_introductions", "ch_help_desk", "ch_strategy", "ch_town_square_tips", "ch_pump", "ch_nightshift"];
+  let expectedSearchCount = 0;
+  for (const cid of readableIds) {
+    let before = null;
+    for (;;) {
+      const page = await get(`/api/history?channel_id=${cid}&limit=200${before === null ? "" : `&before_seq=${before}`}`, "u_host");
+      expectedSearchCount += page.body.messages.filter((m) => m.deleted_at === null).length;
+      if (!page.body.has_more) break;
+      before = page.body.messages[0].seq;
+    }
+  }
+  const emptySearch = await get("/api/search?q=", "u_host");
+  ok(emptySearch.body.messages.length === expectedSearchCount,
+    "search edge: empty q returns every readable non-deleted message");
+  const upperSearch = await get("/api/search?q=MOTHERLODE", "u_host");
+  ok(upperSearch.body.messages.length === 1 && upperSearch.body.messages[0].body.toLowerCase().includes("motherlode"),
+    "search edge: an uppercase query matches a lowercase body");
+  const probe = await new WsTest().connect("u_host");
+  probe.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await probe.waitFor((f) => f.type === "presence", "search probe subscribed");
+  probe.send({ type: "send", id: "c_q12_probe", channel_id: "ch_general", payload: { body: "q12uniqueprobe" } });
+  const probeAck = await probe.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q12_probe", "search probe ack");
+  const probeFound = await get("/api/search?q=q12uniqueprobe", "u_host");
+  ok(probeFound.body.messages.length === 1, "search edge: a live message is findable by its unique body");
+  probe.send({ type: "delete", channel_id: "ch_general", payload: { message_id: probeAck.payload.message_id } });
+  await probe.waitFor((f) => f.type === "message.delete" && f.payload.message_id === probeAck.payload.message_id, "search probe delete");
+  const probeGone = await get("/api/search?q=q12uniqueprobe", "u_host");
+  ok(probeGone.body.messages.length === 0 && probeGone.body.threads.length === 0,
+    "search edge: a deleted message returns no hit for its unique body");
+  probe.close();
+  const unknownPath = await get("/api/nope", "u_host");
+  ok(unknownPath.status === 404 && unknownPath.body.error === "not_found",
+    "routing edge: an unknown path returns 404 not_found");
+  const malformedReport = await fetch(BASE + "/api/reports", {
+    method: "POST", headers: asUser("u_host"), body: "{not json",
+  });
+  const malformedReportBody = await malformedReport.json().catch(() => ({}));
+  ok(malformedReport.status === 404 && malformedReportBody.error === "not_found",
+    "routing edge: a malformed JSON body is treated as empty and 404s, never a 500");
+  const wrongMethod = await fetch(BASE + "/api/channels", { method: "DELETE", headers: asUser("u_host") });
+  const wrongMethodBody = await wrongMethod.json().catch(() => ({}));
+  ok(wrongMethod.status === 404 && wrongMethodBody.error === "not_found",
+    "routing edge: a wrong-method request on a known path falls through to 404");
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
