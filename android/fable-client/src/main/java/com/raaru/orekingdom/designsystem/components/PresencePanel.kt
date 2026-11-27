@@ -16,7 +16,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import com.raaru.orekingdom.designsystem.tokens.OreTheme
 
-private fun presenceLabel(presence: OrePresence): String = when (presence) {
+fun presenceLabel(presence: OrePresence): String = when (presence) {
     OrePresence.Online -> OreComponentCopy.PresenceOnline
     OrePresence.Idle -> OreComponentCopy.PresenceIdle
     OrePresence.Offline -> OreComponentCopy.PresenceOffline

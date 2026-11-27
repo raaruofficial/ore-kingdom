@@ -36,6 +36,7 @@ fun OrePrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     disabledNote: String? = null,
+    note: String? = null,
 ) {
     val colors = OreTheme.color
     val interaction = remember { MutableInteractionSource() }
@@ -62,6 +63,7 @@ fun OrePrimaryButton(
         borderColor = null,
         interaction = interaction,
         modifier = modifier,
+        standingNote = note,
     )
 }
 
@@ -109,9 +111,10 @@ private fun OreButtonFrame(
     borderColor: Color?,
     interaction: MutableInteractionSource,
     modifier: Modifier = Modifier,
+    standingNote: String? = null,
 ) {
     val shape = OreTheme.shape.sm
-    val note = if (enabled) null else disabledNote
+    val note = standingNote ?: if (enabled) null else disabledNote
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(OreTheme.space.xs),

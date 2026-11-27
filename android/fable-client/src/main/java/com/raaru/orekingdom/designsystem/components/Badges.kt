@@ -31,7 +31,7 @@ fun roleColor(role: OreRole): Color = when (role) {
     OreRole.Prestige -> OreTheme.color.role.prestige
 }
 
-private fun roleLabel(role: OreRole): String = when (role) {
+fun roleLabel(role: OreRole): String = when (role) {
     OreRole.Free -> OreComponentCopy.RoleFree
     OreRole.Member -> OreComponentCopy.RoleMember
     OreRole.Operator -> OreComponentCopy.RoleOperator

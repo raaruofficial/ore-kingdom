@@ -111,7 +111,7 @@ fun ChannelRow(
 }
 
 @Composable
-private fun UnreadBadge(count: Int) {
+fun UnreadBadge(count: Int) {
     Box(
         modifier = Modifier
             .height(OreTheme.size.badgeHeight)
