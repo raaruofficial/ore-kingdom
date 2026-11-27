@@ -21,7 +21,7 @@ import com.raaru.orekingdom.designsystem.components.OreText
 import com.raaru.orekingdom.designsystem.tokens.OreTheme
 
 private const val PreviewTitle = "Preview"
-private const val PreviewNote = "Preview — actions are not available yet."
+private const val PreviewNote = "Preview — actions are not yet available."
 private const val LoadingDescription = "Loading"
 private const val EmptyTitle = "Nothing here yet"
 private const val EmptyBody = "This area is on its way."

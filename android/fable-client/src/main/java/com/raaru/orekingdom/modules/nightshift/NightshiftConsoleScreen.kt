@@ -46,7 +46,7 @@ data class NightshiftConsoleUi(
 internal object NightshiftConsoleCopy {
     const val TITLE = "NIGHTSHIFT"
     const val PREVIEW_TAG = "Preview"
-    const val PREVIEW_NOTE = "Preview — actions are not available yet."
+    const val PREVIEW_NOTE = "Preview — actions are not yet available."
     const val NOT_ENTITLED_NOTE = "Console actions are not part of your current access."
     const val FLEET_HEADER = "FLEET STATUS"
     const val FLEET_EMPTY = "No fleet status to show yet."

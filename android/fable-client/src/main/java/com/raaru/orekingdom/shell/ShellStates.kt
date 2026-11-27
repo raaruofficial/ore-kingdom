@@ -31,7 +31,7 @@ import com.raaru.orekingdom.designsystem.tokens.OreTheme
 private const val RailLoadingDescription = "Loading channels"
 private const val RailEmptyTitle = "No channels to show"
 private const val RailEmptyBody = "Reading is free forever." // standing copy, BRIEF §8
-private const val RailErrorTitle = "Couldn't load the Kingdom"
+private const val RailErrorTitle = "Kingdom could not be loaded"
 private const val RailErrorBody = "Check your connection and try again."
 private const val RailStaleNote = "Offline — showing saved channels"
 private const val Retry = "Retry"

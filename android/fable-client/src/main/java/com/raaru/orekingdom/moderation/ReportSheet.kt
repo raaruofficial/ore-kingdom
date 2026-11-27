@@ -69,7 +69,7 @@ internal object ReportCopy {
     const val ACK_BODY = "Thanks. A moderator will review it. You'll get a notice when it is closed."
     const val DONE = "Done"
     const val FAILED = "Your report could not be sent. Nothing was lost — try again."
-    const val RETRY = "Try again"
+    const val RETRY = "Retry"
     const val CLOSED_TITLE = "Your report was closed"
     const val CLOSED_ACTIONED = "Outcome: actioned"
     const val CLOSED_NO_ACTION = "Outcome: no action"

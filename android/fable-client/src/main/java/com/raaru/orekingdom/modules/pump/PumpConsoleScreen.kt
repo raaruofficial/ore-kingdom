@@ -42,7 +42,7 @@ internal object PumpConsoleCopy {
     const val TITLE = "THE PUMP"
     const val FLEET_HEADER = "FLEET"
     const val MAX_WALLETS = 10
-    const val PREVIEW_NOTE = "Preview — actions are not available yet."
+    const val PREVIEW_NOTE = "Preview — actions are not yet available."
     const val PREVIEW_TAG = "Preview"
     const val LINK_WALLET = "Link a wallet"
     const val LINK_NO_CHARGE = "Linking wallets: no charge, up to 10 wallets."
