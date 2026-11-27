@@ -190,4 +190,58 @@ class ChannelRealtimeEdgeTest {
         assertEquals("in a round", presence.getValue("u2").activity)
         assertEquals(OrePresence.Online, presence.getValue("u3").state)
     }
+
+    @Test
+    fun presenceOfMapsKnownStatesAndDefaultsUnknownToOffline() {
+        assertEquals(OrePresence.Online, ChannelRealtime.presenceOf("u", "online", null, false).state)
+        assertEquals(OrePresence.Idle, ChannelRealtime.presenceOf("u", "idle", null, false).state)
+        assertEquals(OrePresence.Offline, ChannelRealtime.presenceOf("u", "busy", null, false).state)
+        assertEquals(OrePresence.Offline, ChannelRealtime.presenceOf("u", "", null, false).state)
+    }
+
+    @Test
+    fun applyPresenceInsertsAnAbsentUser() {
+        val r = rt("a")
+        r.applyPresence(ChannelRealtime.presenceOf("u_new", "online", "mining", false))
+        assertEquals(1, r.state.value.presence.size)
+        assertEquals("mining", r.state.value.presence["u_new"]?.activity)
+    }
+
+    @Test
+    fun applyPresenceReplacesWholesaleIncludingNullActivity() {
+        val r = rt("a")
+        r.applyPresence(ChannelRealtime.presenceOf("u", "online", "mining", false))
+        r.applyPresence(ChannelRealtime.presenceOf("u", "idle", null, true))
+        val p = r.state.value.presence["u"]
+        assertEquals(OrePresence.Idle, p?.state)
+        assertEquals(null, p?.activity)
+        assertEquals(true, p?.invisible)
+        assertEquals(1, r.state.value.presence.size)
+    }
+
+    @Test
+    fun historyPageWithoutPlanNeverMovesLastSeqBackwards() {
+        val r = rt("a")
+        r.seedLastSeq("a", 50)
+        val result = r.onHistoryPage("a", oldestSeq = 10, newestSeq = 30, hasMore = true)
+        assertTrue(result.complete)
+        assertFalse(result.replaceWindow)
+        assertNull(result.next)
+        assertEquals(50L, r.sync("a").lastSeq)
+    }
+
+    @Test
+    fun gapDuringActivePlanPreservesThePlansUntilSeq() {
+        val r = rt("a")
+        r.seedLastSeq("a", 10)
+        val first = r.onMessage("a", 1000)
+        assertTrue(first is MessageDecision.Accept)
+        assertEquals(10L, r.sync("a").plan?.untilSeq)
+
+        val second = r.onMessage("a", 2000)
+        assertTrue(second is MessageDecision.Accept)
+        assertEquals(2000L, r.sync("a").lastSeq)
+        assertEquals(2000L, r.sync("a").plan?.beforeSeq)
+        assertEquals(10L, r.sync("a").plan?.untilSeq)
+    }
 }
