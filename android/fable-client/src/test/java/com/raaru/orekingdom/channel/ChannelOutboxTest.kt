@@ -204,4 +204,44 @@ class ChannelOutboxTest {
         assertEquals("k1", reborn.peek()?.idempotencyKey)
         assertEquals(1, reborn.peek()?.attempts)
     }
+
+    @Test
+    fun peekReturnsHeadWithoutRemovingIt() {
+        val o = outbox()
+        o.enqueue("ch_a", "one")
+        o.enqueue("ch_a", "two")
+        val first = o.peek()
+        assertEquals("one", first?.body)
+        assertEquals(2, o.size)
+        assertEquals(first, o.peek())
+    }
+
+    @Test
+    fun peekOfUnknownKeyReturnsNull() {
+        val o = outbox()
+        o.enqueue("ch_a", "one")
+        assertNull(o.peek("no_such_key"))
+    }
+
+    @Test
+    fun forChannelFiltersInFifoOrder() {
+        val o = outbox()
+        o.enqueue("ch_a", "a1")
+        o.enqueue("ch_b", "b1")
+        o.enqueue("ch_a", "a2")
+        assertEquals(listOf("a1", "a2"), o.forChannel("ch_a").map { it.body })
+        assertEquals(listOf("b1"), o.forChannel("ch_b").map { it.body })
+        assertTrue(o.forChannel("ch_none").isEmpty())
+    }
+
+    @Test
+    fun drainOrderSnapshotSurvivesLaterAck() {
+        val o = outbox()
+        val e1 = queued(o.enqueue("ch_a", "one"))
+        o.enqueue("ch_a", "two")
+        val snapshot = o.drainOrder()
+        assertTrue(o.ack(e1.idempotencyKey))
+        assertEquals(2, snapshot.size)
+        assertEquals(1, o.size)
+    }
 }

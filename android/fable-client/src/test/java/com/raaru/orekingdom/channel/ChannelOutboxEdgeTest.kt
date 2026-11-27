@@ -79,4 +79,40 @@ class ChannelOutboxEdgeTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun delimiterRichBodyRoundTripsByteIdentical() {
+        val source = outbox("a")
+        val body = "line one\nline two: with colon 🎉"
+        source.enqueue("ch", body)
+        val restored = outbox("t")
+        assertEquals(1, restored.restore(source.serialize()))
+        assertEquals(body, restored.peek()?.body)
+        assertEquals(source.serialize(), restored.serialize())
+    }
+
+    @Test
+    fun threadAndReplySurviveRoundTripIndependently() {
+        val source = outbox("a")
+        source.enqueue("ch", "threaded", threadId = "th_1")
+        source.enqueue("ch", "reply", replyTo = "m_9")
+        val restored = outbox("t")
+        assertEquals(2, restored.restore(source.serialize()))
+        val entries = restored.drainOrder()
+        assertEquals("th_1", entries[0].threadId)
+        assertEquals(null, entries[0].replyTo)
+        assertEquals(null, entries[1].threadId)
+        assertEquals("m_9", entries[1].replyTo)
+    }
+
+    @Test
+    fun truncatedPayloadRestoresOnlyTheCompletePrefix() {
+        val source = outbox("a")
+        source.enqueue("ch", "first")
+        source.enqueue("ch", "second")
+        val cut = source.serialize().dropLast(3)
+        val restored = outbox("t")
+        assertEquals(1, restored.restore(cut))
+        assertEquals("first", restored.peek()?.body)
+    }
 }
