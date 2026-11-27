@@ -133,6 +133,9 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     testImplementation("junit:junit:4.13.2")
+    // Real org.json on the JVM so the kingdom contract decoders are
+    // unit-testable (the android.jar copy is a stub).
+    testImplementation("org.json:json:20240303")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
