@@ -46,23 +46,40 @@ class KingdomFixturesTest {
         return (0 until array.length()).map { array.getString(it) }
     }
 
-    @Test
-    fun everyFixtureDeclaresItsOwnKeySetsHonestly() {
-        val entries = entries()
-        assertEquals(19, entries.size)
-        entries.forEach { entry ->
-            val frame = entry.getJSONObject("frame")
-            val name = entry.getString("name")
-            assertTrue(
-                "envelope keys of $name: declared=${declared(entry, "envelope_keys")} actual=${frame.keySet()}",
-                declared(entry, "envelope_keys") == frame.keySet(),
-            )
-            assertTrue(
-                "payload keys of $name: declared=${declared(entry, "payload_keys")} actual=${frame.getJSONObject("payload").keySet()}",
-                declared(entry, "payload_keys") == frame.getJSONObject("payload").keySet(),
-            )
-        }
+    private fun checkEntry(name: String) {
+        val entry = entries().first { it.getString("name") == name }
+        val frame = entry.getJSONObject("frame")
+        assertEquals(
+            "envelope keys of $name",
+            declared(entry, "envelope_keys"),
+            frame.keySet(),
+        )
+        assertEquals(
+            "payload keys of $name",
+            declared(entry, "payload_keys"),
+            frame.getJSONObject("payload").keySet(),
+        )
     }
+
+    @Test fun fixture_00() = checkEntry("ack")
+    @Test fun fixture_01() = checkEntry("message")
+    @Test fun fixture_02() = checkEntry("message.update")
+    @Test fun fixture_03() = checkEntry("message.delete")
+    @Test fun fixture_04() = checkEntry("reaction")
+    @Test fun fixture_05() = checkEntry("presence")
+    @Test fun fixture_06() = checkEntry("role.update")
+    @Test fun fixture_07() = checkEntry("error")
+    @Test fun fixture_08() = checkEntry("resync")
+    @Test fun fixture_09() = checkEntry("typing (server relay)")
+    @Test fun fixture_10() = checkEntry("subscribe")
+    @Test fun fixture_11() = checkEntry("unsubscribe")
+    @Test fun fixture_12() = checkEntry("resume")
+    @Test fun fixture_13() = checkEntry("send")
+    @Test fun fixture_14() = checkEntry("edit")
+    @Test fun fixture_15() = checkEntry("delete")
+    @Test fun fixture_16() = checkEntry("react")
+    @Test fun fixture_17() = checkEntry("typing")
+    @Test fun fixture_18() = checkEntry("presence.set")
 
     @Test
     fun serverGoldenFramesDecodeWithProductionDecoders() {
