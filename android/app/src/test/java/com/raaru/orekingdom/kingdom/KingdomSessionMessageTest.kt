@@ -766,13 +766,14 @@ class KingdomSessionMessageTest {
             ),
         )
         transport.historyRequests.clear()
-        emit(KingdomInbound.Message(sessionMessage("m5", "ch_general", 5, "u_other")))
+        emit(KingdomInbound.Message(sessionMessage("m600", "ch_general", 600, "u_other")))
+        assertTrue(transport.historyRequests.isEmpty())
 
         session.openChannel("ch_general")
 
-        assertTrue(
-            transport.historyRequests.any { it.channelId == "ch_general" && it.beforeSeq == 5L },
-        )
+        assertEquals(1, transport.historyRequests.size)
+        assertEquals("ch_general", transport.historyRequests[0].channelId)
+        assertEquals(600L, transport.historyRequests[0].beforeSeq)
     }
 
     @Test
