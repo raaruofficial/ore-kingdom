@@ -125,10 +125,13 @@ class ChannelRealtimeEdgeTest {
         val r = rt("a")
         r.seedLastSeq("a", 10)
         r.onMessage("a", 700)
+        // Accepting the gapped message advanced lastSeq to 700; the plan
+        // existed only to backfill the hole below it.
+        assertEquals(700L, r.sync("a").lastSeq)
         r.onDisconnected()
         val out = r.onConnected()
         val resume = out.filterIsInstance<RealtimeOutbound.Resume>().single()
-        assertEquals(mapOf("a" to 10L), resume.lastSeq)
+        assertEquals(mapOf("a" to 700L), resume.lastSeq)
         assertTrue(out.none { it is RealtimeOutbound.History })
         assertNull(r.sync("a").plan)
         assertTrue(r.sync("a").resumeInFlight)

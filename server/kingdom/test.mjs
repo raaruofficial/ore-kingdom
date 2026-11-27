@@ -482,6 +482,113 @@ try {
   sub.close();
   pub.close();
 
+
+  // 17 — pass + moderation edges (DeepSeek programme item 5): claim/action
+  // state machine, appeal paths, mod-gate coverage, lapse read half.
+  // Moderation state here is built fresh (sections 9/11 already consumed
+  // the seeded queue item and sanction).
+  const logDenied = await get("/api/mod/log", "u_host");
+  ok(logDenied.status === 403, "mod edge: mod log is 403 for a non-moderator");
+  const claimDenied = await post("/api/mod/claim", { report_id: "r_seed1" }, "u_host");
+  ok(claimDenied.status === 403, "mod edge: claim is 403 for a non-moderator");
+  const actionDenied = await post("/api/mod/action", { report_id: "r_seed1", action: "mute", reason_code: "spam", note: "x", override_claim: false }, "u_host");
+  ok(actionDenied.status === 403, "mod edge: action is 403 for a non-moderator");
+  const appealDecideDenied = await post("/api/mod/appeal", { report_id: "r_seed1", outcome: "upheld", reason_code: "other", note: "", override_claim: false }, "u_host");
+  ok(appealDecideDenied.status === 403, "mod edge: appeal decision is 403 for a non-moderator");
+
+  const badReport = await post("/api/reports", { target_kind: "message", target_id: "m_missing", reason: "spam", note: "" }, "u_host");
+  ok(badReport.status === 404, "report edge: unknown message is 404");
+  const profileReport = await post("/api/reports", { target_kind: "profile", target_id: "u_spammer", reason: "spam", note: "" }, "u_host");
+  ok(profileReport.status === 404, "report edge: non-message target kind is 404");
+
+  // Two reports on the same message create two distinct open items
+  // (the server keeps no per-message dedupe — pinned as current truth).
+  const genHist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const reportTarget = genHist.body.messages.find((m) => m.author_id === "u_host" && m.body === "general is fine");
+  ok(!!reportTarget, "mod edge: report target message exists");
+  await post("/api/reports", { target_kind: "message", target_id: reportTarget.id, reason: "spam", note: "one" }, "u_free");
+  await post("/api/reports", { target_kind: "message", target_id: reportTarget.id, reason: "spam", note: "two" }, "u_free");
+  const queueNow = await get("/api/mod/queue", "u_mod");
+  const dupItems = queueNow.body.items.filter((i) => i.snapshot.body === "general is fine" && i.state === "open");
+  ok(dupItems.length === 2 && dupItems[0].report_id !== dupItems[1].report_id,
+    "report edge: duplicate reports land as distinct open items");
+
+  // Claim state machine: claim -> re-claim 409 -> action closes -> claim on closed 409, action on closed 404.
+  const itemA = dupItems[0];
+  const claim1 = await post("/api/mod/claim", { report_id: itemA.report_id }, "u_mod");
+  ok(claim1.status === 200, "claim edge: first claim succeeds");
+  const claim2 = await post("/api/mod/claim", { report_id: itemA.report_id }, "u_mod");
+  ok(claim2.status === 409 && claim2.body.error === "not_open", "claim edge: claiming a claimed item is 409 not_open");
+  const claimMissing = await post("/api/mod/claim", { report_id: "r_missing" }, "u_mod");
+  ok(claimMissing.status === 409, "claim edge: claiming a missing item is 409");
+  const appealOnPlain = await post("/api/mod/appeal", { report_id: itemA.report_id, outcome: "upheld", reason_code: "other", note: "", override_claim: false }, "u_mod");
+  ok(appealOnPlain.status === 404, "appeal edge: deciding an item with no appeal is 404");
+  const muteAct = await post("/api/mod/action", { report_id: itemA.report_id, action: "mute", reason_code: "spam", note: "edge test mute", override_claim: false, duration_sec: 3600 }, "u_mod");
+  ok(muteAct.status === 200, "mod edge: claimant's mute action succeeds");
+  const hostSanctions = await get("/api/sanctions", "u_host");
+  const muteSanction = hostSanctions.body.sanctions.find((x) => x.rung === "mute");
+  ok(!!muteSanction && muteSanction.appeal.state === "none", "mod edge: mute lands as a sanction with appeal state none");
+  const actClosed = await post("/api/mod/action", { report_id: itemA.report_id, action: "mute", reason_code: "spam", note: "", override_claim: false }, "u_mod");
+  ok(actClosed.status === 404, "mod edge: action on a closed item is 404");
+  const claimClosed = await post("/api/mod/claim", { report_id: itemA.report_id }, "u_mod");
+  ok(claimClosed.status === 409, "mod edge: claim on a closed item is 409");
+
+  // A mute does NOT push role.update (no entitlement change); a ban does.
+  const watch = await new WsTest().connect("u_host");
+  watch.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await watch.waitFor((f) => f.type === "presence", "mute/ban watch ready");
+  const itemB = dupItems[1];
+  await post("/api/mod/claim", { report_id: itemB.report_id }, "u_mod");
+  const pushBase = watch.count((f) => f.type === "role.update");
+  await post("/api/mod/action", { report_id: itemB.report_id, action: "mute", reason_code: "spam", note: "second mute", override_claim: false, duration_sec: 3600 }, "u_mod");
+  await new Promise((r) => setTimeout(r, 250));
+  ok(watch.count((f) => f.type === "role.update") === pushBase, "mod edge: mute action pushes no role.update");
+  const banReport = await post("/api/reports", { target_kind: "message", target_id: reportTarget.id, reason: "scam", note: "ban path" }, "u_free");
+  ok(banReport.status === 200, "mod edge: ban-path report accepted");
+  const queueForBan = await get("/api/mod/queue", "u_mod");
+  const banItem = queueForBan.body.items.find((i) => i.snapshot.body === "general is fine" && i.state === "open");
+  await post("/api/mod/action", { report_id: banItem.report_id, action: "ban", reason_code: "scam", note: "edge test ban", override_claim: false }, "u_mod");
+  const banPush = await watch.waitFor((f) => f.type === "role.update" && f.payload.entitlements.role === "free", "ban role.update");
+  ok(!!banPush, "mod edge: ban pushes role.update with free-role entitlements");
+  await post("/api/dev/restore", { user_id: "u_host" }, "u_host");
+  await watch.waitFor((f) => f.type === "role.update" && f.payload.entitlements.role === "member", "post-ban restore push");
+  watch.close();
+
+  // Appeals: someone else's sanction is 404; own appeal round-trips;
+  // a second appeal on a decided sanction reopens a fresh item (pinned).
+  const foreignAppeal = await post("/api/appeals", { sanction_id: muteSanction.sanction_id, statement: "not mine" }, "u_free");
+  ok(foreignAppeal.status === 404, "appeal edge: appealing another user's sanction is 404");
+  const ownAppeal = await post("/api/appeals", { sanction_id: muteSanction.sanction_id, statement: "edge appeal" }, "u_host");
+  ok(ownAppeal.status === 200, "appeal edge: own appeal is accepted");
+  const queueAppeal = await get("/api/mod/queue", "u_mod");
+  const appealItem2 = queueAppeal.body.items.find((i) => i.appeal && i.snapshot.body === "edge appeal" && i.state === "open");
+  ok(!!appealItem2, "appeal edge: appeal item lands in the queue");
+  const uphold = await post("/api/mod/appeal", { report_id: appealItem2.report_id, outcome: "upheld", reason_code: "spam", note: "", override_claim: false }, "u_mod");
+  ok(uphold.status === 200, "appeal edge: upheld decision succeeds");
+  const afterUphold = await get("/api/sanctions", "u_host");
+  ok(afterUphold.body.sanctions.some((x) => x.sanction_id === muteSanction.sanction_id && x.appeal.state === "upheld"),
+    "appeal edge: upheld keeps the sanction, marked upheld");
+  await post("/api/appeals", { sanction_id: muteSanction.sanction_id, statement: "second edge appeal" }, "u_host");
+  const queueAppeal2 = await get("/api/mod/queue", "u_mod");
+  const appealItem3 = queueAppeal2.body.items.find((i) => i.appeal && i.snapshot.body === "second edge appeal" && i.state === "open");
+  ok(!!appealItem3 && appealItem3.report_id !== appealItem2.report_id,
+    "appeal edge: a second appeal on a decided sanction opens a fresh item");
+  await post("/api/mod/appeal", { report_id: appealItem3.report_id, outcome: "overturned", reason_code: "other", note: "", override_claim: false }, "u_mod");
+  const afterOverturn = await get("/api/sanctions", "u_host");
+  ok(!afterOverturn.body.sanctions.some((x) => x.sanction_id === muteSanction.sanction_id),
+    "appeal edge: overturned removes the sanction");
+
+  // Lapse read half (the push half is section 10/15): entitlements read
+  // collapses to free while lapsed and returns on restore.
+  await post("/api/dev/lapse", { user_id: "u_host" }, "u_host");
+  const lapsedEnt = await get("/api/entitlements", "u_host");
+  ok(lapsedEnt.body.role === "free" && lapsedEnt.body.capabilities.post.length === 0 && lapsedEnt.body.expires_at === null,
+    "lapse edge: lapsed entitlements read is free with no post caps and no expiry");
+  await post("/api/dev/restore", { user_id: "u_host" }, "u_host");
+  const restoredEnt = await get("/api/entitlements", "u_host");
+  ok(restoredEnt.body.role === "member" && restoredEnt.body.capabilities.post.length > 0,
+    "lapse edge: restored entitlements read is member again");
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
