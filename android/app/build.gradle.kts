@@ -25,6 +25,16 @@ android {
             ?: System.getenv("HOST_URL")
             ?: "https://orekingdom.137-184-143-128.sslip.io"
         buildConfigField("String", "HOST_URL", "\"$hostUrl\"")
+
+        // The Discord-framework backend (CONTRACT.md) base URL for the
+        // :fable-client host layer (com.raaru.orekingdom.kingdom). Default
+        // is the emulator's view of the developer machine, where the
+        // local backend runs during integration; staging/production
+        // builds override with -PKINGDOM_API_URL=... or the env var.
+        val kingdomApiUrl = (project.findProperty("KINGDOM_API_URL") as String?)
+            ?: System.getenv("KINGDOM_API_URL")
+            ?: "http://10.0.2.2:8799"
+        buildConfigField("String", "KINGDOM_API_URL", "\"$kingdomApiUrl\"")
     }
 
     // Release signing comes ONLY from the environment (CI secrets). Nothing
@@ -97,6 +107,11 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
+
+    // The Discord-framework client (INTEGRATION_MAP §5 step 1). Same
+    // Compose BOM / Kotlin / AGP versions as :fable-client's own build
+    // file, so no version alignment is needed.
+    implementation(project(":fable-client"))
 
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

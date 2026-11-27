@@ -9,6 +9,10 @@
 # Session 9 (Sonnet package, 2026-11-26): the same run now also proves
 # the JVM unit tests and Android lint for :fable-client — one combined
 # run per push (compile -> test -> lint), per the CI-economy rule.
+#
+# Integration run (2026-11-26, stage 1): the same combined run now also
+# builds :app (which depends on :fable-client) and runs its JVM unit
+# tests, so the host wiring is proven in the same single run per push.
 
 name: Fable client compile
 
@@ -17,7 +21,9 @@ on:
     branches: [fable-client-compile]
     paths:
       - 'android/fable-client/**'
+      - 'android/app/**'
       - 'android/settings.gradle.kts'
+      - 'android/build.gradle.kts'
       - '.github/workflows/fable-client-compile.yml'
   workflow_dispatch:
 
@@ -65,3 +71,16 @@ jobs:
         if: always()
         run: |
           cat fable-client/build/reports/lint-results-debug.txt || echo "no lint text report produced"
+
+      - name: Build :app debug APK (integration stage 1)
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Unit tests :app (integration stage 1)
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Test report summary :app
+        if: always()
+        run: |
+          for f in app/build/test-results/testDebugUnitTest/*.xml; do
+            [ -f "$f" ] && grep -o 'testsuite name="[^"]*" tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$f" || true
+          done
