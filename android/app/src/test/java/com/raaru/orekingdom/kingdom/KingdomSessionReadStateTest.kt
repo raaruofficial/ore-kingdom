@@ -1,6 +1,7 @@
 package com.raaru.orekingdom.kingdom
 
 import com.raaru.orekingdom.channel.ChannelStatus
+import com.raaru.orekingdom.channel.PresenceUi
 import com.raaru.orekingdom.channel.SearchStatus
 import com.raaru.orekingdom.designsystem.components.OrePresence
 import com.raaru.orekingdom.identity.MemberListStatus
@@ -38,6 +39,8 @@ class KingdomSessionReadStateTest {
         members = listOf(sessionMember("u_self", "Self"), sessionMember("u_other", "Other")),
         channels = listOf(sessionChannel("ch_general")),
     )
+
+    private fun emit(frame: KingdomInbound) = runBlocking { transport.framesFlow.emit(frame) }
 
     private fun buildSession(): KingdomSession {
         session = KingdomSession(transport, scope, InMemoryLastVisitedStore(), InMemoryOutboxPersistence())
@@ -305,5 +308,39 @@ class KingdomSessionReadStateTest {
         assertTrue(state.threads.first { it.id == "t_arch" }.archived)
         assertEquals(5, state.threads.first { it.id == "t_arch" }.replyCount)
         assertEquals("general", state.threads.first { it.id == "t_open" }.channelName)
+    }
+
+    @Test
+    fun membersStateMergesRealtimePresenceAndDefaultsOffline() {
+        transport = fakeTransport()
+        buildSession()
+        session.start()
+        emit(KingdomInbound.Presence(PresenceUi("u_other", OrePresence.Idle, "mining", false)))
+
+        val state = session.membersState()
+
+        assertEquals(MemberListStatus.Ready, state.status)
+        val other = state.members.first { it.userId == "u_other" }
+        assertEquals(OrePresence.Idle, other.presence)
+        assertEquals("mining", other.activity)
+        val self = state.members.first { it.userId == "u_self" }
+        assertEquals(OrePresence.Offline, self.presence)
+        assertEquals(null, self.activity)
+    }
+
+    @Test
+    fun membersStateIgnoresPresenceForNonMembersAndInvisibleFlagStaysOut() {
+        transport = fakeTransport()
+        buildSession()
+        session.start()
+        emit(KingdomInbound.Presence(PresenceUi("u_ghost", OrePresence.Online, "haunting", false)))
+        emit(KingdomInbound.Presence(PresenceUi("u_other", OrePresence.Online, null, true)))
+
+        val state = session.membersState()
+
+        assertEquals(listOf("u_self", "u_other"), state.members.map { it.userId })
+        val other = state.members.first { it.userId == "u_other" }
+        assertEquals(OrePresence.Online, other.presence)
+        assertEquals(null, other.activity)
     }
 }
