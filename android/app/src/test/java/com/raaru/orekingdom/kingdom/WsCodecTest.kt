@@ -210,4 +210,41 @@ class WsCodecTest {
         val frag2 = WsCodec.encodeFrame(WsCodec.OP_CONTINUATION, "ed".toByteArray(), mask)
         assertEquals(listOf(WsFrame.Text("mask ed")), assembler.feed(frag2))
     }
+
+    @Test
+    fun singleFinBinaryFrameDeliversBinary() {
+        val payload = byteArrayOf(1, 2, 3, 4)
+        val frames = WsFrameAssembler().feed(WsCodec.encodeFrame(WsCodec.OP_BINARY, payload, null))
+        assertEquals(1, frames.size)
+        assertTrue((frames[0] as WsFrame.Binary).bytes.contentEquals(payload))
+    }
+
+    @Test
+    fun reservedOpcodeDeliversBinary() {
+        val payload = byteArrayOf(9, 8, 7)
+        val frames = WsFrameAssembler().feed(WsCodec.encodeFrame(0x3, payload, null))
+        assertEquals(1, frames.size)
+        assertTrue((frames[0] as WsFrame.Binary).bytes.contentEquals(payload))
+    }
+
+    @Test
+    fun rsv1BitSetTextParsesAsPlainText() {
+        val wire = serverText("hi").also { it[0] = (it[0].toInt() or 0x40).toByte() }
+        val frames = WsFrameAssembler().feed(wire)
+        assertEquals(listOf(WsFrame.Text("hi")), frames)
+    }
+
+    @Test
+    fun feedSliceWithPaddingParsesOnlyTheSlice() {
+        val frame = serverText("sliced")
+        val wire = byteArrayOf(9, 9) + frame + byteArrayOf(7)
+        val frames = WsFrameAssembler().feed(wire, 2, frame.size)
+        assertEquals(listOf(WsFrame.Text("sliced")), frames)
+    }
+
+    @Test
+    fun encodeCloseRoundTripsCodeAndReason() {
+        val frames = WsFrameAssembler().feed(WsCodec.encodeClose(1001, "bye", null))
+        assertEquals(listOf(WsFrame.Close(1001, "bye")), frames)
+    }
 }
