@@ -2,12 +2,17 @@ package com.raaru.orekingdom.kingdom
 
 import com.raaru.orekingdom.channel.HistoryPageRequest
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.runBlocking
+import com.raaru.orekingdom.moderation.ModActionRequest
+import com.raaru.orekingdom.moderation.ReportSubmission
 import org.json.JSONException
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -40,6 +45,12 @@ class KingdomTransportHttpTest {
 
         override fun getErrorStream(): InputStream? =
             errorBody?.let { ByteArrayInputStream(it.toByteArray(StandardCharsets.UTF_8)) }
+
+        /* C-23 harness step (supervisor): capture the request body
+         * postJson writes, so action-body pins can parse it back. */
+        val requestBody = ByteArrayOutputStream()
+
+        override fun getOutputStream(): OutputStream = requestBody
     }
 
     private fun transport(code: Int, body: String = "", errorBody: String? = null): KingdomTransport =
@@ -297,5 +308,83 @@ class KingdomTransportHttpTest {
         assertEquals(null, conn?.getRequestProperty("X-Kingdom-Wallet"))
         assertEquals(10_000, conn?.connectTimeout)
         assertEquals(15_000, conn?.readTimeout)
+    }
+
+    @Test
+    fun submitReportBodyCarriesExactlyTheFourKeys() {
+        var conn: FakeConnection? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> FakeConnection(url, 200, "{}", null).also { conn = it } },
+        )
+
+        runBlocking { t.submitReport(ReportSubmission("message", "m_1", "scam", "bad actor")) }
+
+        assertEquals("POST", conn?.requestMethod)
+        val body = JSONObject(conn!!.requestBody.toString(StandardCharsets.UTF_8))
+        assertEquals(setOf("target_kind", "target_id", "reason", "note"), body.keys().asSequence().toSet())
+        assertEquals("message", body.getString("target_kind"))
+        assertEquals("m_1", body.getString("target_id"))
+        assertEquals("scam", body.getString("reason"))
+        assertEquals("bad actor", body.getString("note"))
+    }
+
+    @Test
+    fun modActionBodyOmitsDurationSecWhenNull() {
+        var conn: FakeConnection? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> FakeConnection(url, 200, "{}", null).also { conn = it } },
+        )
+
+        runBlocking {
+            t.modAction(ModActionRequest("rep_1", "mute", "harassment", "note text", null, false))
+        }
+
+        val body = JSONObject(conn!!.requestBody.toString(StandardCharsets.UTF_8))
+        assertEquals(
+            setOf("report_id", "action", "reason_code", "note", "override_claim"),
+            body.keys().asSequence().toSet(),
+        )
+        assertTrue(!body.has("duration_sec"))
+        assertEquals("rep_1", body.getString("report_id"))
+        assertEquals(false, body.getBoolean("override_claim"))
+    }
+
+    @Test
+    fun modActionBodyCarriesDurationSecWhenPresent() {
+        var conn: FakeConnection? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> FakeConnection(url, 200, "{}", null).also { conn = it } },
+        )
+
+        runBlocking {
+            t.modAction(ModActionRequest("rep_1", "slowmode", "spam", "", 3600L, true))
+        }
+
+        val body = JSONObject(conn!!.requestBody.toString(StandardCharsets.UTF_8))
+        assertEquals(
+            setOf("report_id", "action", "reason_code", "note", "override_claim", "duration_sec"),
+            body.keys().asSequence().toSet(),
+        )
+        assertEquals(3600L, body.getLong("duration_sec"))
+        assertEquals(true, body.getBoolean("override_claim"))
+    }
+
+    @Test
+    fun nightshiftSuggestionBodyCarriesExactlyIdAndAccept() {
+        var conn: FakeConnection? = null
+        val t = KingdomTransport(
+            "http://localhost",
+            connectionFactory = { url -> FakeConnection(url, 200, "{}", null).also { conn = it } },
+        )
+
+        runBlocking { t.nightshiftSuggestion("s_1", true) }
+
+        val body = JSONObject(conn!!.requestBody.toString(StandardCharsets.UTF_8))
+        assertEquals(setOf("suggestion_id", "accept"), body.keys().asSequence().toSet())
+        assertEquals("s_1", body.getString("suggestion_id"))
+        assertEquals(true, body.getBoolean("accept"))
     }
 }
