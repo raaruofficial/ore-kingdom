@@ -105,6 +105,7 @@ const sanctions = [ // per-recipient records
   { sanction_id: "san_1", user_id: "u_free", rung: "mute", reason_category: "spam", duration_sec: 86400, appeal: { state: "none" }, statement: null },
 ];
 let reportCounter = 0;
+let sanctionCounter = 1;
 const modQueue = [
   {
     report_id: "r_seed1", state: "open", claimed_by: null, reason: "scam", reporter_count: 3,
@@ -424,7 +425,7 @@ const server = http.createServer(async (req, res) => {
         }
       } else if (["slowmode", "mute", "suspension", "ban"].includes(body.action)) {
         sanctions.push({
-          sanction_id: `san_${sanctions.length + 1}`, user_id: authorId,
+          sanction_id: `san_${++sanctionCounter}`, user_id: authorId,
           rung: body.action, reason_category: body.reason_code ?? "other",
           duration_sec: body.duration_sec ?? null, appeal: { state: "none" }, statement: null,
         });

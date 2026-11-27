@@ -1291,6 +1291,44 @@ c55Sock.close(); c55Other.close();
   ok(c67Sock.count((f) => f.type === "resync") === 0, "resume edge: a gap of exactly 500 sends no resync frame");
   c67Sock.close();
 
+  const t5f1Hist = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  const t5f1Msg = t5f1Hist.body.messages.find((m) => m.author_id === "u_free");
+  await post("/api/reports", { target_kind: "message", target_id: t5f1Msg.id, reason: "spam", note: "t5f1 first" }, "u_host");
+  const t5f1QueueA = await get("/api/mod/queue", "u_mod");
+  const t5f1ItemA = t5f1QueueA.body.items.filter((i) => i.snapshot.body === t5f1Msg.body && i.state === "open" && !i.appeal).at(-1);
+  await post("/api/mod/action", { report_id: t5f1ItemA.report_id, action: "mute", reason_code: "spam", note: "t5f1", override_claim: false, duration_sec: 777001 }, "u_mod");
+  const t5f1SanctionsA = await get("/api/sanctions", "u_free");
+  const t5f1SanctionA = t5f1SanctionsA.body.sanctions.filter((s) => s.rung === "mute" && s.duration_sec === 777001).at(-1);
+  ok(!!t5f1SanctionA, "sanction id reuse: the first setup sanction exists");
+  await post("/api/reports", { target_kind: "message", target_id: t5f1Msg.id, reason: "spam", note: "t5f1 second" }, "u_host");
+  const t5f1QueueB = await get("/api/mod/queue", "u_mod");
+  const t5f1ItemB = t5f1QueueB.body.items.filter((i) => i.snapshot.body === t5f1Msg.body && i.state === "open" && !i.appeal).at(-1);
+  await post("/api/mod/action", { report_id: t5f1ItemB.report_id, action: "mute", reason_code: "spam", note: "t5f1", override_claim: false, duration_sec: 777002 }, "u_mod");
+  const t5f1SanctionsB = await get("/api/sanctions", "u_free");
+  const t5f1SanctionB = t5f1SanctionsB.body.sanctions.filter((s) => s.rung === "mute" && s.duration_sec === 777002).at(-1);
+  ok(!!t5f1SanctionB, "sanction id reuse: the second setup sanction exists");
+  await post("/api/appeals", { sanction_id: t5f1SanctionA.sanction_id, statement: "t5f1 appeal" }, "u_free");
+  const t5f1QueueAppeal = await get("/api/mod/queue", "u_mod");
+  const t5f1AppealItem = t5f1QueueAppeal.body.items.find((i) => i.appeal && i.snapshot.body === "t5f1 appeal" && i.state === "open");
+  await post("/api/mod/appeal", { report_id: t5f1AppealItem.report_id, outcome: "overturned", reason_code: "other", note: "", override_claim: false }, "u_mod");
+  await post("/api/reports", { target_kind: "message", target_id: t5f1Msg.id, reason: "spam", note: "t5f1 third" }, "u_host");
+  const t5f1QueueC = await get("/api/mod/queue", "u_mod");
+  const t5f1ItemC = t5f1QueueC.body.items.filter((i) => i.snapshot.body === t5f1Msg.body && i.state === "open" && !i.appeal).at(-1);
+  await post("/api/mod/action", { report_id: t5f1ItemC.report_id, action: "mute", reason_code: "spam", note: "t5f1", override_claim: false, duration_sec: 777003 }, "u_mod");
+  const t5f1SanctionsC = await get("/api/sanctions", "u_free");
+  const t5f1SanctionC = t5f1SanctionsC.body.sanctions.filter((s) => s.rung === "mute" && s.duration_sec === 777003).at(-1);
+  ok(!!t5f1SanctionC, "sanction id reuse: the post-removal sanction exists");
+  ok(t5f1SanctionC.sanction_id !== t5f1SanctionB.sanction_id,
+    "sanction id reuse: a sanction minted after an overturn removal never reuses a live id");
+  const t5f1All = await get("/api/sanctions", "u_free");
+  ok(new Set(t5f1All.body.sanctions.map((s) => s.sanction_id)).size === t5f1All.body.sanctions.length,
+    "sanction id reuse: every live sanction id is unique");
+  await post("/api/appeals", { sanction_id: t5f1SanctionC.sanction_id, statement: "t5f1 appeal on c" }, "u_free");
+  const t5f1After = await get("/api/sanctions", "u_free");
+  ok(t5f1After.body.sanctions.find((s) => s.duration_sec === 777003).appeal.state === "pending" &&
+    t5f1After.body.sanctions.find((s) => s.duration_sec === 777002).appeal.state === "none",
+    "sanction id reuse: an appeal on the newest sanction resolves to that sanction, not the older one");
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
