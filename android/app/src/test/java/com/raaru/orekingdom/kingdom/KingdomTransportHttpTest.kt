@@ -166,4 +166,88 @@ class KingdomTransportHttpTest {
 
         assertEquals("http://localhost/api/threads?channel_id=ch+a%26b", seen.toString())
     }
+
+    @Test
+    fun passesNullSeatsStayNullAndValuedSeatsParse() {
+        val nullSeats = runBlocking {
+            transport(200, body = "{\"lifetime_holder\":true,\"prestige_seats_remaining\":null}").getPasses()
+        }
+        assertEquals(true, nullSeats.lifetimeHolder)
+        assertEquals(null, nullSeats.prestigeSeatsRemaining)
+
+        val valued = runBlocking {
+            transport(200, body = "{\"lifetime_holder\":false,\"prestige_seats_remaining\":7}").getPasses()
+        }
+        assertEquals(false, valued.lifetimeHolder)
+        assertEquals(7, valued.prestigeSeatsRemaining)
+    }
+
+    @Test
+    fun crownWithBothFieldsMissingReadsNullNull() {
+        val empty = runBlocking { transport(200, body = "{}").getCrown() }
+        assertEquals(null, empty.holderName)
+        assertEquals(null, empty.month)
+
+        val held = runBlocking {
+            transport(200, body = "{\"holder_name\":\"Other\",\"month\":\"2026-11\"}").getCrown()
+        }
+        assertEquals("Other", held.holderName)
+        assertEquals("2026-11", held.month)
+    }
+
+    @Test
+    fun sanctionDefaultsForAbsentAppealNullDurationAndAbsentId() {
+        val body = "{\"sanctions\":[" +
+            "{\"rung\":\"mute\",\"reason_category\":\"harassment\",\"duration_sec\":null}," +
+            "{\"sanction_id\":\"s_9\",\"rung\":\"ban\",\"reason_category\":\"scam\",\"duration_sec\":86400,\"appeal\":{\"state\":\"pending\"}}" +
+            "]}"
+        val sanctions = runBlocking { transport(200, body = body).getSanctions() }
+
+        assertEquals(2, sanctions.size)
+        val first = sanctions[0]
+        assertEquals(null, first.sanctionId)
+        assertEquals(null, first.durationSec)
+        assertEquals("none", first.appealState)
+        val second = sanctions[1]
+        assertEquals("s_9", second.sanctionId)
+        assertEquals(86400L, second.durationSec)
+        assertEquals("pending", second.appealState)
+    }
+
+    @Test
+    fun modQueueItemDefaultsForAbsentContextHistoryAndNullArms() {
+        val body = "{\"items\":[{" +
+            "\"report_id\":\"rep_1\",\"state\":\"open\",\"claimed_by\":null,\"reason\":\"scam\",\"reporter_count\":2," +
+            "\"snapshot\":{\"body\":\"flagged\",\"author_id\":\"u_a\",\"channel_id\":\"ch_general\",\"created_at\":\"2026-11-27T01:00:00Z\"}," +
+            "\"appeal\":null}]}"
+        val items = runBlocking { transport(200, body = body).getModQueue() }
+
+        val item = items.single()
+        assertEquals("rep_1", item.reportId)
+        assertTrue(item.snapshot.context.isEmpty())
+        assertTrue(item.authorHistory.isEmpty())
+        assertEquals(null, item.appeal)
+        assertEquals(null, item.claimedBy)
+    }
+
+    @Test
+    fun modQueueItemFullShapeParsesFieldForField() {
+        val body = "{\"items\":[{" +
+            "\"report_id\":\"rep_2\",\"state\":\"claimed\",\"claimed_by\":\"u_mod\",\"reason\":\"harassment\",\"reporter_count\":3," +
+            "\"snapshot\":{\"body\":\"flagged\",\"author_id\":\"u_a\",\"channel_id\":\"ch_general\",\"created_at\":\"2026-11-27T01:00:00Z\"," +
+            "\"context\":[{\"id\":\"c_1\",\"channel_id\":\"ch_general\",\"seq\":4,\"author_id\":\"u_b\",\"body\":\"ctx body\",\"created_at\":\"2026-11-27T00:59:00Z\"}]}," +
+            "\"author_history\":[{\"rung\":\"mute\",\"reason_category\":\"spam\",\"at\":\"2026-11-20T01:00:00Z\"}]," +
+            "\"appeal\":{\"statement\":\"please\",\"sanction_by\":\"u_mod\",\"state\":\"pending\"}}]}"
+        val items = runBlocking { transport(200, body = body).getModQueue() }
+
+        val item = items.single()
+        assertEquals("claimed", item.state)
+        assertEquals("u_mod", item.claimedBy)
+        assertEquals(3, item.reporterCount)
+        assertEquals("c_1", item.snapshot.context.single().id)
+        assertEquals("ctx body", item.snapshot.context.single().body)
+        assertEquals("mute", item.authorHistory.single().rung)
+        assertEquals("please", item.appeal?.statement)
+        assertEquals("pending", item.appeal?.state)
+    }
 }
