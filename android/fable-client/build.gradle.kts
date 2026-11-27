@@ -49,7 +49,8 @@ android {
         // decision (the seal pins AGP 8.7.3), recorded in
         // INTEGRATION_RUN_2026-11-26.md stage 4.
         disable += "FrequentlyChangingValue"
-        disable += "ComposableFlowOperator"
+        // Issue id, not the detector class name (ComposableFlowOperatorDetector).
+        disable += "FlowOperatorInvokedInComposition"
         disable += "RememberInComposition"
         textReport = true
     }
