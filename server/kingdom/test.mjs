@@ -724,6 +724,141 @@ try {
   ok(wrongMethod.status === 404 && wrongMethodBody.error === "not_found",
     "routing edge: a wrong-method request on a known path falls through to 404");
 
+  // 19 — server behaviour pins, second wave (DeepSeek full-spend
+  // programme Q-28..Q-40): refusal aftermath, relays, and read shapes
+  // the first wave did not cover.
+  const q28Free = await new WsTest().connect("u_free");
+  q28Free.send({ type: "subscribe", payload: { channel_ids: ["ch_strategy"] } });
+  const q28Refusal = await q28Free.waitFor((f) => f.type === "error", "q28 refusal");
+  ok(q28Refusal.payload.code === "not_entitled" && q28Refusal.payload.channel_id === "ch_strategy",
+    "subscribe edge: refusal carries not_entitled + the channel id");
+  const q28Spam = await new WsTest().connect("u_spammer");
+  q28Spam.send({ type: "send", id: "c_q28_1", channel_id: "ch_strategy", payload: { body: "q28 strategy secret" } });
+  await q28Spam.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q28_1", "q28 strategy ack");
+  await new Promise((r) => setTimeout(r, 250));
+  ok(q28Free.count((f) => f.type === "message" && f.payload.message.body === "q28 strategy secret") === 0,
+    "subscribe edge: a refused subscription receives no messages from the channel");
+  q28Free.send({ type: "subscribe", payload: { channel_ids: ["ch_general", "ch_strategy"] } });
+  await q28Free.waitFor((f) => f.type === "error" && f.payload.channel_id === "ch_strategy" && f !== q28Refusal, "q28 mixed refusal");
+  const q28Host = await new WsTest().connect("u_host");
+  q28Host.send({ type: "send", id: "c_q28_2", channel_id: "ch_general", payload: { body: "q28 general hello" } });
+  const q28Got = await q28Free.waitFor((f) => f.type === "message" && f.payload.message.body === "q28 general hello", "q28 mixed delivery");
+  ok(!!q28Got, "subscribe edge: a mixed subscribe delivers the readable channel and refuses the other per-id");
+  q28Free.close(); q28Spam.close(); q28Host.close();
+
+  const q29A = await new WsTest().connect("u_host");
+  const q29B = await new WsTest().connect("u_mod");
+  q29A.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  q29B.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await q29B.waitFor((f) => f.type === "presence", "q29 observer ready");
+  const q29C = await new WsTest().connect("u_free");
+  q29A.send({ type: "typing", channel_id: "ch_general", payload: { state: "start" } });
+  const q29Relay = await q29B.waitFor((f) => f.type === "typing" && f.payload.user_id === "u_host", "q29 typing relay");
+  ok(q29Relay.payload.state === "start", "typing edge: a subscriber receives the relay carrying user_id + state");
+  await new Promise((r) => setTimeout(r, 250));
+  ok(q29A.count((f) => f.type === "typing") === 0, "typing edge: the sender does not receive its own typing frame");
+  ok(q29C.count((f) => f.type === "typing") === 0, "typing edge: a connected non-subscriber receives nothing");
+  q29A.close(); q29B.close(); q29C.close();
+  const q30Host = await new WsTest().connect("u_host");
+  const q30Obs = await new WsTest().connect("u_mod");
+  q30Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await q30Obs.waitFor((f) => f.type === "presence", "q30 observer ready");
+  q30Host.send({ type: "send", id: "c_q30_1", channel_id: "ch_general", payload: { body: "q30 react target" } });
+  const q30Ack = await q30Host.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q30_1", "q30 target ack");
+  const q30Mid = q30Ack.payload.message_id;
+  q30Host.send({ type: "react", channel_id: "ch_general", payload: { message_id: q30Mid, emoji: "🔥", op: "add" } });
+  const q30Added = await q30Obs.waitFor((f) => f.type === "reaction" && f.payload.message_id === q30Mid, "q30 add broadcast");
+  ok(q30Added.payload.count === 1 && q30Added.payload.actor_ids.includes("u_host"), "react edge: add broadcasts count 1 with the actor");
+  q30Host.send({ type: "react", channel_id: "ch_general", payload: { message_id: q30Mid, emoji: "🔥", op: "remove" } });
+  const q30Removed = await q30Obs.waitFor((f) => f.type === "reaction" && f.payload.message_id === q30Mid && f !== q30Added, "q30 remove broadcast");
+  ok(q30Removed.payload.count === 0 && !q30Removed.payload.actor_ids.includes("u_host"),
+    "react edge: remove decrements the count and drops the actor");
+  const q30Before = q30Obs.count((f) => f.type === "reaction" && f.payload.message_id === q30Mid);
+  q30Obs.send({ type: "react", channel_id: "ch_general", payload: { message_id: q30Mid, emoji: "🔥", op: "remove" } });
+  await new Promise((r) => setTimeout(r, 250));
+  const q30Ghost = q30Obs.frames.filter((f) => f.type === "reaction" && f.payload.message_id === q30Mid).at(-1);
+  ok(q30Obs.count((f) => f.type === "reaction" && f.payload.message_id === q30Mid) === q30Before + 1 && q30Ghost.payload.count === 0,
+    "react edge: removing a reaction the caller never added still broadcasts with the count unchanged");
+  const q30Silence = q30Obs.count((f) => f.type === "reaction");
+  q30Host.send({ type: "react", channel_id: "ch_general", payload: { message_id: "m_missing", emoji: "🔥", op: "add" } });
+  await new Promise((r) => setTimeout(r, 250));
+  ok(q30Obs.count((f) => f.type === "reaction") === q30Silence, "react edge: a react naming an unknown message produces no frame");
+  q30Host.close(); q30Obs.close();
+  const q30bHost = await new WsTest().connect("u_host");
+  q30bHost.send({ type: "send", id: "c_q30b_1", channel_id: "ch_general", payload: { body: "q30b react target" } });
+  const q30bAck = await q30bHost.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q30b_1", "q30b target ack");
+  const q30bFree = await new WsTest().connect("u_free");
+  q30bFree.send({ type: "react", channel_id: "ch_general", payload: { message_id: q30bAck.payload.message_id, emoji: "🔥", op: "add" } });
+  const q30bDenied = await q30bFree.waitFor((f) => f.type === "error", "q30b free react refusal");
+  ok(q30bDenied.payload.code === "not_entitled", "react edge: a free user's react answers not_entitled");
+  q30bHost.close(); q30bFree.close();
+  const q31Author = await new WsTest().connect("u_host");
+  const q31Obs = await new WsTest().connect("u_mod");
+  q31Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await q31Obs.waitFor((f) => f.type === "presence", "q31 observer ready");
+  q31Author.send({ type: "send", id: "c_q31_1", channel_id: "ch_general", payload: { body: "q31 delete target" } });
+  const q31Ack = await q31Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q31_1", "q31 target ack");
+  const q31Mid = q31Ack.payload.message_id;
+  q31Author.send({ type: "delete", channel_id: "ch_general", payload: { message_id: q31Mid } });
+  await q31Obs.waitFor((f) => f.type === "message.delete" && f.payload.message_id === q31Mid, "q31 first delete");
+  q31Author.send({ type: "delete", channel_id: "ch_general", payload: { message_id: q31Mid } });
+  await new Promise((r) => setTimeout(r, 300));
+  ok(q31Obs.count((f) => f.type === "message.delete" && f.payload.message_id === q31Mid) === 1,
+    "delete edge: deleting the same message twice broadcasts exactly one tombstone");
+  q31Author.send({ type: "send", id: "c_q31_2", channel_id: "ch_general", payload: { body: "q31 edit target" } });
+  const q31Ack2 = await q31Author.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q31_2", "q31 edit target ack");
+  q31Author.send({ type: "edit", channel_id: "ch_general", payload: { message_id: q31Ack2.payload.message_id } });
+  const q31Upd = await q31Obs.waitFor((f) => f.type === "message.update" && f.payload.message.id === q31Ack2.payload.message_id, "q31 bodyless edit");
+  ok(q31Upd.payload.message.body === "q31 edit target" && q31Upd.payload.message.edited_at !== null,
+    "edit edge: an edit with no body field keeps the body, stamps edited_at, and broadcasts");
+  q31Author.send({ type: "edit", channel_id: "ch_general", payload: { message_id: "m_missing", body: "nobody" } });
+  const q31Err = await q31Author.waitFor((f) => f.type === "error", "q31 unknown edit refusal");
+  ok(q31Err.payload.code === "not_entitled", "edit edge: an edit naming an unknown message answers not_entitled");
+  q31Author.close(); q31Obs.close();
+
+  const q32Free = await new WsTest().connect("u_free");
+  q32Free.send({ type: "resume", payload: { last_seq: { ch_town_square_tips: 0 } } });
+  await new Promise((r) => setTimeout(r, 300));
+  ok(q32Free.count((f) => f.type === "message") === 0 && q32Free.count((f) => f.type === "resync") === 0 && q32Free.count((f) => f.type === "error") === 0,
+    "resume edge: an unreadable channel is skipped silently — no replay, no resync, no error");
+  const q32Host = await new WsTest().connect("u_host");
+  q32Host.send({ type: "send", id: "c_q32_1", channel_id: "ch_town_square_tips", payload: { body: "q32 tips post" } });
+  await q32Host.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q32_1", "q32 tips ack");
+  await new Promise((r) => setTimeout(r, 250));
+  ok(q32Free.count((f) => f.type === "message" && f.payload.message.body === "q32 tips post") === 0,
+    "resume edge: a skipped resume does not subscribe — later messages are not delivered");
+  const q32Op = await new WsTest().connect("u_op");
+  q32Op.send({ type: "resume", payload: { last_seq: { ch_general: 999999 } } });
+  await new Promise((r) => setTimeout(r, 250));
+  ok(q32Op.count((f) => f.type === "message") === 0, "resume edge: a last_seq beyond the head replays nothing");
+  q32Host.send({ type: "send", id: "c_q32_2", channel_id: "ch_general", payload: { body: "q32 after resume" } });
+  const q32Next = await q32Op.waitFor((f) => f.type === "message" && f.payload.message.body === "q32 after resume", "q32 post-resume delivery");
+  ok(!!q32Next, "resume edge: a beyond-head resume still subscribes — the next new message is delivered");
+  q32Free.close(); q32Host.close(); q32Op.close();
+  const q33Obs = await new WsTest().connect("u_mod");
+  q33Obs.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await q33Obs.waitFor((f) => f.type === "presence", "q33 observer ready");
+  await new Promise((r) => setTimeout(r, 300));
+  const q33FreeFrame = (f) => f.type === "presence" && f.payload.presence.user_id === "u_free";
+  const q33SnapState = q33Obs.frames.find(q33FreeFrame).payload.presence.state;
+  const q33Actor = await new WsTest().connect("u_free");
+  await new Promise((r) => setTimeout(r, 300));
+  const q33BaseVis = q33Obs.count((f) => q33FreeFrame(f) && f.payload.presence.invisible === false);
+  const q33BaseInv = q33Obs.count((f) => q33FreeFrame(f) && f.payload.presence.invisible === true);
+  q33Actor.send({ type: "presence.set", payload: { invisible: false } });
+  const q33VisDeadline = Date.now() + 3000;
+  while (q33Obs.count((f) => q33FreeFrame(f) && f.payload.presence.invisible === false) <= q33BaseVis && Date.now() < q33VisDeadline) await new Promise((r) => setTimeout(r, 25));
+  const q33Vis = q33Obs.frames.filter((f) => q33FreeFrame(f) && f.payload.presence.invisible === false).at(-1);
+  ok(q33Vis !== undefined && q33Vis.payload.presence.state === q33SnapState,
+    "presence edge: presence.set invisible=false broadcasts the flag cleared with the state unchanged");
+  q33Actor.send({ type: "presence.set", payload: { invisible: true } });
+  const q33InvDeadline = Date.now() + 3000;
+  while (q33Obs.count((f) => q33FreeFrame(f) && f.payload.presence.invisible === true) <= q33BaseInv && Date.now() < q33InvDeadline) await new Promise((r) => setTimeout(r, 25));
+  const q33Inv = q33Obs.frames.filter((f) => q33FreeFrame(f) && f.payload.presence.invisible === true).at(-1);
+  ok(q33Inv !== undefined && q33Inv.payload.presence.state === q33SnapState,
+    "presence edge: presence.set invisible=true broadcasts the flag set with the state unchanged");
+  q33Obs.close(); q33Actor.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
