@@ -110,6 +110,7 @@ fun AppShell(
                     var total = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { total = 0f },
+                        onDragCancel = { total = 0f },
                         onDragEnd = {
                             if (total > swipePx) railOpen = true
                             else if (total < -swipePx) railOpen = false

@@ -147,8 +147,10 @@ private fun rememberRemaining(windowEndsAt: String): String? {
 
 private fun remainingText(windowEndsAt: String): String? {
     val end = runCatching { OffsetDateTime.parse(windowEndsAt).toInstant() }.getOrNull() ?: return null
-    val minutes = Duration.between(Instant.now(), end).toMinutes()
-    if (minutes <= 0) return null
+    val minutes = Duration.between(Instant.now(), end).let {
+        if (it <= Duration.ZERO) return null
+        (it.seconds + 59 + if (it.nano > 0) 1 else 0) / 60
+    }
     val hours = minutes / 60
     return if (hours > 0) "${hours}h ${minutes % 60}m left" else "${minutes}m left"
 }
