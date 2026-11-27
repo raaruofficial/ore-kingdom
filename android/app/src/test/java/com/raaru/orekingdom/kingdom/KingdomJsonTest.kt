@@ -132,4 +132,69 @@ class KingdomJsonTest {
         assertEquals("resume", frame.getString("type"))
         assertEquals(41L, frame.getJSONObject("payload").getJSONObject("last_seq").getLong("ch_general"))
     }
+
+    @Test
+    fun sendFrameWithThreadIdCarriesExactPayloadKeys() {
+        val frame = JSONObject(KingdomJson.sendFrame("c_key2", "ch_general", "hi", "t_1", null))
+        assertEquals("send", frame.getString("type"))
+        assertEquals("c_key2", frame.getString("id"))
+        assertEquals("ch_general", frame.getString("channel_id"))
+        val payload = frame.getJSONObject("payload")
+        assertEquals(2, payload.length())
+        assertTrue(payload.has("body"))
+        assertTrue(payload.has("thread_id"))
+        assertEquals(false, payload.has("reply_to"))
+        assertEquals("t_1", payload.getString("thread_id"))
+    }
+
+    @Test
+    fun sendFrameWithoutOptionalsCarriesBodyOnly() {
+        val frame = JSONObject(KingdomJson.sendFrame("c_key3", "ch_general", "hi", null, null))
+        val payload = frame.getJSONObject("payload")
+        assertEquals(1, payload.length())
+        assertTrue(payload.has("body"))
+        assertEquals("hi", payload.getString("body"))
+    }
+
+    @Test
+    fun reactFrameRemoveEmitsOpRemove() {
+        val frame = JSONObject(KingdomJson.reactFrame("ch_general", "m_1", "🔥", false))
+        assertEquals("react", frame.getString("type"))
+        assertEquals("ch_general", frame.getString("channel_id"))
+        val payload = frame.getJSONObject("payload")
+        assertEquals("remove", payload.getString("op"))
+        assertEquals("m_1", payload.getString("message_id"))
+        assertEquals("🔥", payload.getString("emoji"))
+    }
+
+    @Test
+    fun typingFrameFalseEmitsStateStop() {
+        val frame = JSONObject(KingdomJson.typingFrame("ch_general", false))
+        assertEquals("typing", frame.getString("type"))
+        assertEquals("stop", frame.getJSONObject("payload").getString("state"))
+    }
+
+    @Test
+    fun presenceSetFrameFalseEmitsInvisibleFalse() {
+        val frame = JSONObject(KingdomJson.presenceSetFrame(false))
+        assertEquals("presence.set", frame.getString("type"))
+        assertEquals(false, frame.getJSONObject("payload").getBoolean("invisible"))
+    }
+
+    @Test
+    fun editAndDeleteFramesCarryExactPayloadKeys() {
+        val edit = JSONObject(KingdomJson.editFrame("ch_general", "m_1", "new body"))
+        assertEquals("edit", edit.getString("type"))
+        assertEquals("ch_general", edit.getString("channel_id"))
+        val editPayload = edit.getJSONObject("payload")
+        assertEquals(2, editPayload.length())
+        assertEquals("m_1", editPayload.getString("message_id"))
+        assertEquals("new body", editPayload.getString("body"))
+        val delete = JSONObject(KingdomJson.deleteFrame("ch_general", "m_1"))
+        assertEquals("delete", delete.getString("type"))
+        assertEquals("ch_general", delete.getString("channel_id"))
+        val deletePayload = delete.getJSONObject("payload")
+        assertEquals(1, deletePayload.length())
+        assertEquals("m_1", deletePayload.getString("message_id"))
+    }
 }
