@@ -69,6 +69,16 @@ data class SearchUiState(
     val readableChannelIds: Set<String> = emptySet(),
 )
 
+/**
+ * The render-visible hits of a search state (Q-15): hits outside the
+ * readable set dropped, duplicate ids first-wins, order preserved.
+ */
+internal fun visibleSearchHits(state: SearchUiState): Pair<List<SearchThreadHitUi>, List<SearchMessageHitUi>> {
+    val threads = state.threads.filter { it.channelId in state.readableChannelIds }.distinctBy { it.id }
+    val messages = state.messages.filter { it.channelId in state.readableChannelIds }.distinctBy { it.message.id }
+    return threads to messages
+}
+
 private object SearchSurfaceCopy {
     const val TITLE = "Search"
     const val PLACEHOLDER = "Search messages and threads"
@@ -100,11 +110,8 @@ fun SearchSurface(
     onRetry: () -> Unit = onSubmit,
 ) {
     val space = OreTheme.space
-    val threads = remember(state.threads, state.readableChannelIds) {
-        state.threads.filter { it.channelId in state.readableChannelIds }.distinctBy { it.id }
-    }
-    val messages = remember(state.messages, state.readableChannelIds) {
-        state.messages.filter { it.channelId in state.readableChannelIds }.distinctBy { it.message.id }
+    val (threads, messages) = remember(state.threads, state.messages, state.readableChannelIds) {
+        visibleSearchHits(state)
     }
     Column(modifier = modifier.fillMaxSize().background(OreTheme.color.surface.base)) {
         Column(
