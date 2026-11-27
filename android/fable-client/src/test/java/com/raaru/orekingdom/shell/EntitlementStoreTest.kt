@@ -197,4 +197,15 @@ class EntitlementStoreTest {
             }
         }
     }
+
+    @Test
+    fun bootstrapWithZeroChannelsPublishesAnEmptyReadyRail() {
+        val t = FakeTransport(ent(), emptyList(), vacant)
+        val s = started(t)
+        val rail = s.rail.value
+        assertEquals(RailStatus.Ready, rail.status)
+        assertTrue(rail.categories.isEmpty())
+        assertNull(rail.lastVisitedChannelId)
+        assertTrue(t.unsubscribed.isEmpty())
+    }
 }

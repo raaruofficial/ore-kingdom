@@ -147,7 +147,7 @@ internal object ModQueueCopy {
     val OUTCOMES = listOf(AppealState.Upheld to "Upheld", AppealState.Reduced to "Reduced", AppealState.Overturned to "Overturned")
 }
 
-private fun reasonLabel(wire: String): String =
+internal fun reasonLabel(wire: String): String =
     ReportReason.values().firstOrNull { it.wire == wire }?.label ?: ModQueueCopy.REASON_UNKNOWN
 
 /**

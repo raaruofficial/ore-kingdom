@@ -60,4 +60,12 @@ class SearchFilterTest {
         assertEquals(listOf("t3", "t1", "t2"), threads.map { it.id })
         assertEquals(listOf("m2", "m1"), messages.map { it.message.id })
     }
+
+    @Test
+    fun sameIdSurvivesInBothListsIndependently() {
+        val state = SearchUiState(threads = listOf(threadHit("shared", "ch_a")), messages = listOf(messageHit("shared", "ch_a")), readableChannelIds = setOf("ch_a"))
+        val (threads, messages) = visibleSearchHits(state)
+        assertEquals(listOf("shared"), threads.map { it.id })
+        assertEquals(listOf("shared"), messages.map { it.message.id })
+    }
 }

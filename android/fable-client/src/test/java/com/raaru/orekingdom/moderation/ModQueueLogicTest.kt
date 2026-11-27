@@ -77,4 +77,31 @@ class ModQueueLogicTest {
         assertNull(item.claimedBy)
         assertNull(item.appeal)
     }
+
+    @Test
+    fun reasonLabelMapsEveryWireAndFallsBackForUnknown() {
+        assertEquals("Spam", reasonLabel("spam"))
+        assertEquals("Abuse", reasonLabel("abuse"))
+        assertEquals("Scam", reasonLabel("scam"))
+        assertEquals("Illegal", reasonLabel("illegal"))
+        assertEquals("Other", reasonLabel("other"))
+        assertEquals(ModQueueCopy.REASON_UNKNOWN, reasonLabel("bogus"))
+        assertEquals("Not specified", ModQueueCopy.REASON_UNKNOWN)
+    }
+
+    @Test
+    fun reportReasonWireLabelPairsAreExact() {
+        assertEquals(
+            listOf("spam" to "Spam", "abuse" to "Abuse", "scam" to "Scam", "illegal" to "Illegal", "other" to "Other"),
+            ReportReason.values().map { it.wire to it.label },
+        )
+    }
+
+    @Test
+    fun reportTargetKindWiresAreExact() {
+        assertEquals(
+            listOf("message", "thread", "profile", "spotlight", "commercial_post"),
+            ReportTargetKind.values().map { it.wire },
+        )
+    }
 }
