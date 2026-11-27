@@ -859,6 +859,98 @@ try {
     "presence edge: presence.set invisible=true broadcasts the flag set with the state unchanged");
   q33Obs.close(); q33Actor.close();
 
+  const meAnon = await (await fetch(BASE + "/api/me")).json();
+  ok(meAnon.user_id === "u_host", "identity edge: no auth headers falls back to u_host");
+  const meUnknown = await (await fetch(BASE + "/api/me", { headers: { authorization: "Bearer local:u_nobody" } })).json();
+  ok(meUnknown.user_id === "u_host", "identity edge: an unknown Bearer local id falls back to u_host");
+  const meWallet = await (await fetch(BASE + "/api/me", { headers: { "x-kingdom-wallet": "wallet_op" } })).json();
+  ok(meWallet.user_id === "u_op", "identity edge: a matching X-Kingdom-Wallet selects that user");
+  const meBadWallet = await (await fetch(BASE + "/api/me", { headers: { "x-kingdom-wallet": "wallet_nope" } })).json();
+  ok(meBadWallet.user_id === "u_host", "identity edge: a non-matching wallet falls back to u_host");
+  const membersRes = await get("/api/members", "u_host");
+  ok(membersRes.status === 200 && membersRes.body.members.length === 5, "members edge: the list returns all five seeded users");
+  ok(membersRes.body.members.every((m) => Object.keys(m).sort().join(",") === "display_name,founding,moderator,role,user_id"),
+    "members edge: every member carries exactly the memberShape keys");
+  const mods = membersRes.body.members.filter((m) => m.moderator);
+  ok(mods.length === 1 && mods[0].user_id === "u_mod", "members edge: moderator is true for exactly u_mod");
+  const freeEnt = await get("/api/entitlements", "u_free");
+  ok(freeEnt.body.role === "free" && Array.isArray(freeEnt.body.capabilities.post) && freeEnt.body.capabilities.post.length === 0 &&
+    Array.isArray(freeEnt.body.capabilities.react) && freeEnt.body.capabilities.react.length === 0 &&
+    freeEnt.body.capabilities.pump_module === "none",
+    "entitlements edge: the free role posts and reacts nowhere and has no pump module");
+  ok(freeEnt.body.modules.pump === "off" && freeEnt.body.modules.nightshift === "off" &&
+    freeEnt.body.expires_at === null && freeEnt.body.capabilities.autopilot_surface === false,
+    "entitlements edge: the free role has both modules off, no expiry, and no autopilot surface");
+  const opEnt = await get("/api/entitlements", "u_op");
+  ok(opEnt.body.role === "operator" && opEnt.body.capabilities.pump_day_included === true &&
+    opEnt.body.capabilities.atm_unlock_included === true && opEnt.body.capabilities.nightshift_console === true,
+    "entitlements edge: the operator role includes the pump day, the ATM unlock, and the nightshift console");
+  ok(opEnt.body.modules.pump === "on" && opEnt.body.modules.nightshift === "on" && opEnt.body.expires_at !== null,
+    "entitlements edge: the operator role has both modules on and a non-null expiry");
+  const pumpMember = await get("/api/modules/pump", "u_host");
+  ok(pumpMember.body.wallets.length === 2 && pumpMember.body.day_bank.banked_days === 2 &&
+    pumpMember.body.day_bank.first_day_free === true && pumpMember.body.day_bank.active_remaining_seconds === null,
+    "pump edge: the read returns the two seeded wallets and the day_bank fields verbatim");
+  ok(pumpMember.body.atm.state === "locked", "pump edge: the ATM is locked for a member caller");
+  const pumpOp = await get("/api/modules/pump", "u_op");
+  ok(pumpOp.body.atm.state === "included", "pump edge: the ATM is included for the operator");
+  const nsUnknown = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_missing", accept: true }, "u_op");
+  ok(nsUnknown.status === 404, "nightshift edge: deciding an unknown suggestion is 404");
+  const nsBefore = await get("/api/modules/nightshift", "u_op");
+  ok(nsBefore.body.suggestions.some((s) => s.id === "sug_2"), "nightshift edge: the remaining seeded suggestion is listed");
+  const nsDecide = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_2", accept: true }, "u_op");
+  const nsAfter = await get("/api/modules/nightshift", "u_op");
+  ok(nsDecide.status === 200 && !nsAfter.body.suggestions.some((s) => s.id === "sug_2"),
+    "nightshift edge: deciding a suggestion removes it from the next read");
+  const nsAgain = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_2", accept: false }, "u_op");
+  ok(nsAgain.status === 404, "nightshift edge: deciding the same suggestion twice is 404 the second time");
+  const opSanctions = await get("/api/sanctions", "u_op");
+  ok(opSanctions.status === 200 && Array.isArray(opSanctions.body.sanctions) && opSanctions.body.sanctions.length === 0,
+    "sanctions edge: a user with no sanctions reads an empty list");
+  const introHist = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  const introMsg = introHist.body.messages.find((m) => m.author_id === "u_free");
+  await post("/api/reports", { target_kind: "message", target_id: introMsg.id, reason: "spam", note: "q39 setup" }, "u_host");
+  const q39Queue = await get("/api/mod/queue", "u_mod");
+  const q39Item = q39Queue.body.items.find((i) => i.snapshot.body === introMsg.body && i.state === "open");
+  await post("/api/mod/claim", { report_id: q39Item.report_id }, "u_mod");
+  await post("/api/mod/action", { report_id: q39Item.report_id, action: "mute", reason_code: "spam", note: "q39 mute", override_claim: false, duration_sec: 3600 }, "u_mod");
+  const freeSanctions = await get("/api/sanctions", "u_free");
+  const q39Sanction = freeSanctions.body.sanctions.find((s) => s.rung === "mute");
+  await post("/api/appeals", { sanction_id: q39Sanction.sanction_id, statement: "q39 first appeal" }, "u_free");
+  await post("/api/appeals", { sanction_id: q39Sanction.sanction_id, statement: "q39 second appeal" }, "u_free");
+  const q39Queue2 = await get("/api/mod/queue", "u_mod");
+  const q39AppealItems = q39Queue2.body.items.filter((i) => i.appeal && i.state === "open" &&
+    (i.snapshot.body === "q39 first appeal" || i.snapshot.body === "q39 second appeal"));
+  ok(q39AppealItems.length === 2 && q39AppealItems[0].report_id !== q39AppealItems[1].report_id,
+    "appeal finding: appealing a sanction whose appeal is already pending creates a second open queue item (no pending guard)");
+  await post("/api/reports", { target_kind: "message", target_id: introMsg.id, reason: "spam", note: "q39 unknown action" }, "u_host");
+  const q39Queue3 = await get("/api/mod/queue", "u_mod");
+  const q39Item2 = q39Queue3.body.items.find((i) => i.snapshot.body === introMsg.body && i.state === "open" && !i.appeal);
+  const freeSanctionCount = (await get("/api/sanctions", "u_free")).body.sanctions.length;
+  const q39Act = await post("/api/mod/action", { report_id: q39Item2.report_id, action: "explode", reason_code: "spam", note: "q39", override_claim: false }, "u_mod");
+  const q39Queue4 = await get("/api/mod/queue", "u_mod");
+  const q39Closed = q39Queue4.body.items.find((i) => i.report_id === q39Item2.report_id);
+  const q39Log = await get("/api/mod/log", "u_mod");
+  const freeSanctionCountAfter = (await get("/api/sanctions", "u_free")).body.sanctions.length;
+  const introAfter = await get("/api/history?channel_id=ch_introductions&limit=50", "u_host");
+  ok(q39Act.status === 200 && q39Closed.state === "closed" && q39Log.body.entries.some((e) => e.action === "explode" && e.target_id === "u_free"),
+    "mod-action finding: an unknown action string still closes the item and appends a mod-log entry carrying that string");
+  ok(freeSanctionCountAfter === freeSanctionCount && introAfter.body.messages.find((m) => m.id === introMsg.id).deleted_at === null,
+    "mod-action finding: an unknown action creates no sanction and tombstones nothing");
+  const q40Host = await new WsTest().connect("u_host");
+  q40Host.send({ type: "send", id: "c_q40_1", channel_id: "ch_nope", payload: { body: "nowhere" } });
+  const q40Err = await q40Host.waitFor((f) => f.type === "error", "q40 unknown channel refusal");
+  ok(q40Err.payload.code === "not_entitled" && q40Err.payload.for_id === "c_q40_1",
+    "send edge: a send naming an unknown channel answers not_entitled carrying the frame id");
+  q40Host.send({ type: "send", id: "c_q40_2", channel_id: "ch_general", payload: { body: "q40 ghost thread", thread_id: "t_missing" } });
+  const q40Ack = await q40Host.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_q40_2", "q40 ghost thread ack");
+  ok(!!q40Ack, "send edge: a send carrying an unknown thread_id is acked");
+  const q40Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const q40Threads = await get("/api/threads?channel_id=ch_general", "u_host");
+  ok(q40Hist.body.messages.some((m) => m.id === q40Ack.payload.message_id && m.thread_id === "t_missing") && q40Threads.body.threads.length === 0,
+    "send edge: the ghost-thread message lands in history and the thread list is untouched");
+  q40Host.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
