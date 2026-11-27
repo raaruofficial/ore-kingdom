@@ -187,6 +187,71 @@ class EntitlementStoreLapseTest {
     }
 
     @Test
+    fun replayedPushedListChangesNothingAndUnsubscribesNothing() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        val pushed = channels().filter { it.id != "ch_help" }
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), pushed))
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { r -> r.categories.flatMap { it.channels }.none { it.id == "ch_help" } } }
+        }
+        assertEquals(listOf(listOf("ch_help")), t.unsubscribed)
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), pushed))
+        t.pushes.tryEmit(EntitlementPush(ent(emptyList()), pushed))
+        runBlocking {
+            withTimeout(5_000) { s.entitlements.first { it?.capabilities?.post?.isEmpty() == true } }
+        }
+        assertEquals(listOf("ch_general"), floorIds(s))
+        assertEquals(listOf(listOf("ch_help")), t.unsubscribed)
+    }
+
+    @Test
+    fun pushedDuplicateChannelIdsDedupeFirstWins() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        val pushed = listOf(ch("ch_general", "BACK ROOM"), ch("ch_general", "THE FLOOR"), ch("ch_pump", "THE PUMP", kind = "module"), ch("ch_help", "THE FLOOR"))
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), pushed))
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { r -> r.categories.any { it.title == "BACK ROOM" } } }
+        }
+        val all = s.rail.value.categories.flatMap { it.channels }
+        assertEquals(1, all.count { it.id == "ch_general" })
+        assertEquals(listOf("ch_general"), s.rail.value.categories.first { it.title == "BACK ROOM" }.channels.map { it.id })
+        assertEquals(listOf("ch_help"), floorIds(s))
+    }
+
+    @Test
+    fun pushedEmptyListUnsubscribesEverythingAndStaysReady() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        val s = started(t)
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), emptyList()))
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { it.categories.isEmpty() } }
+        }
+        assertEquals(RailStatus.Ready, s.rail.value.status)
+        assertTrue(s.rail.value.categories.isEmpty())
+        assertEquals(listOf(listOf("ch_announcements", "ch_general", "ch_pump", "ch_help")), t.unsubscribed)
+    }
+
+    @Test
+    fun pushLandsWhileBootstrapIsFailing() {
+        val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
+        t.failEntitlements = true
+        t.failChannels = true
+        val s = EntitlementStore(t, scope, InMemoryLastVisitedStore())
+        s.start()
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { it.status == RailStatus.Error } }
+        }
+        t.pushes.tryEmit(EntitlementPush(ent(listOf("ch_general")), channels()))
+        runBlocking {
+            withTimeout(5_000) { s.rail.first { it.status == RailStatus.Ready } }
+        }
+        assertEquals(listOf("ch_general", "ch_help"), floorIds(s))
+        assertEquals(0, t.channelCalls)
+    }
+
+    @Test
     fun bootstrapFailureShowsError() {
         val t = FakeTransport(ent(), channels(), vacant)
         t.failEntitlements = true

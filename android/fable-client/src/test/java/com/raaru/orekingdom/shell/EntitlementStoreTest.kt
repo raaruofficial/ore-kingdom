@@ -174,6 +174,19 @@ class EntitlementStoreTest {
     }
 
     @Test
+    fun unreadForNotYetVisibleChannelRendersWhenChannelArrives() {
+        val t = FakeTransport(ent(), channels(), vacant)
+        val s = started(t)
+        s.setUnread("ch_strategy", 3)
+        assertTrue(s.rail.value.categories.flatMap { it.channels }.none { it.id == "ch_strategy" })
+        t.channels = channels() + ch("ch_strategy", "THE FLOOR")
+        s.refresh()
+        runBlocking { withTimeout(5_000) { s.rail.first { r -> r.categories.flatMap { it.channels }.any { it.id == "ch_strategy" } } } }
+        val arrived = s.rail.value.categories.flatMap { it.channels }.first { it.id == "ch_strategy" }
+        assertEquals(3, arrived.unreadCount)
+    }
+
+    @Test
     fun pushWithLapsedCapabilitiesDowngradesComposers() {
         val t = FakeTransport(ent(listOf("ch_general")), channels(), vacant)
         val s = started(t)
