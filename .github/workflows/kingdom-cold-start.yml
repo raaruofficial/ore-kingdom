@@ -1,0 +1,83 @@
+# Ore Kingdom — Discord client end-to-end cold run (stage 4 budgets).
+#
+# Boots the stage-3 local backend (server/kingdom) on the runner,
+# builds the debug APK, and cold-starts KingdomActivity on the API 35
+# emulator. The client reads its rail from the backend at
+# 10.0.2.2:8799 (the debug KINGDOM_API_URL default); the run asserts
+# the seeded channel renders and records am start -W TotalTime as
+# the cold-start number FOR THIS SURFACE (CI emulator, debug build —
+# never a device number).
+
+name: Kingdom client cold start (local backend)
+
+on:
+  push:
+    branches: [main, fable-client-compile]
+    paths:
+      - "android/**"
+      - "server/**"
+      - ".github/workflows/kingdom-cold-start.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cold-start:
+    name: KingdomActivity cold start vs local backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Start local backend on the host
+        working-directory: server/kingdom
+        env:
+          KINGDOM_PORT: "8799"
+          KINGDOM_HOST: "0.0.0.0"
+        run: |
+          nohup node server.mjs > backend.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8799/api/spotlight && break
+            sleep 1
+          done
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Cold run — KingdomActivity
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 2048
+          script: bash android/ci/kingdom-cold-run.sh "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk" "$GITHUB_WORKSPACE/evidence/kingdom"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kingdom-cold-run-evidence
+          path: evidence/kingdom
+          if-no-files-found: warn
