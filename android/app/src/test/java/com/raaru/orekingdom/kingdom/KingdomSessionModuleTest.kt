@@ -3,6 +3,8 @@ package com.raaru.orekingdom.kingdom
 import com.raaru.orekingdom.passes.CrownStatus
 import com.raaru.orekingdom.passes.PassStatus
 import com.raaru.orekingdom.passes.PassRecipientUi
+import com.raaru.orekingdom.moderation.AppealState
+import com.raaru.orekingdom.moderation.ModQueueStatus
 import com.raaru.orekingdom.modules.pump.PumpAtmState
 import com.raaru.orekingdom.modules.pump.PumpStatus
 import com.raaru.orekingdom.modules.pump.PumpWalletUi
@@ -211,5 +213,139 @@ class KingdomSessionModuleTest {
         assertEquals(PassStatus.Error, load.passes.status)
         assertEquals(CrownStatus.Ready, load.crown.status)
         assertEquals(null, load.crown.holderName)
+    }
+
+    @Test
+    fun loadModQueueWithoutModLoftNeverCallsTheRead() {
+        transport = fakeTransport()
+        buildSession()
+        session.start()
+
+        val state = runBlocking { session.loadModQueue(sessionEntitlements()) }
+
+        assertEquals(ModQueueStatus.Ready, state.status)
+        assertFalse(state.modLoft)
+        assertEquals("u_self", state.viewerId)
+        assertTrue(state.items.isEmpty())
+        assertEquals(0, transport.modQueueCalls)
+
+        val nullCaps = runBlocking { session.loadModQueue(null) }
+        assertFalse(nullCaps.modLoft)
+        assertEquals(0, transport.modQueueCalls)
+    }
+
+    @Test
+    fun loadModQueueContextNamesResolveWithIdFallback() {
+        transport = fakeTransport()
+        transport.modQueueRead = listOf(
+            ModQueueItemRead(
+                reportId = "rep_1",
+                state = "open",
+                claimedBy = null,
+                reason = "scam",
+                reporterCount = 2,
+                snapshot = ModSnapshotRead(
+                    body = "flagged body",
+                    authorId = "u_other",
+                    channelId = "ch_general",
+                    createdAt = "2026-11-27T01:00:00Z",
+                    context = listOf(
+                        sessionMessage("c_1", "ch_general", 1, "u_other"),
+                        sessionMessage("c_2", "ch_general", 2, "u_ghost"),
+                    ),
+                ),
+                authorHistory = emptyList(),
+                appeal = null,
+            ),
+        )
+        buildSession()
+        session.start()
+        val mod = sessionEntitlements().copy(
+            capabilities = sessionEntitlements().capabilities.copy(modLoft = true),
+        )
+
+        val state = runBlocking { session.loadModQueue(mod) }
+
+        assertTrue(state.modLoft)
+        assertEquals(1, transport.modQueueCalls)
+        val item = state.items.single()
+        assertEquals("Other", item.snapshot.authorName)
+        assertEquals(listOf("Other", "u_ghost"), item.snapshot.context.map { it.authorName })
+        assertEquals("flagged body", item.snapshot.body)
+        assertEquals(2, item.reporterCount)
+    }
+
+    @Test
+    fun loadModQueueSnapshotAuthorNameIsNullWhenAuthorNotInDirectory() {
+        transport = fakeTransport()
+        transport.modQueueRead = listOf(
+            ModQueueItemRead(
+                reportId = "rep_2",
+                state = "open",
+                claimedBy = null,
+                reason = "spam",
+                reporterCount = 1,
+                snapshot = ModSnapshotRead(
+                    body = "ghost body",
+                    authorId = "u_ghost",
+                    channelId = "ch_general",
+                    createdAt = "2026-11-27T01:00:00Z",
+                    context = emptyList(),
+                ),
+                authorHistory = emptyList(),
+                appeal = null,
+            ),
+        )
+        buildSession()
+        session.start()
+        val mod = sessionEntitlements().copy(
+            capabilities = sessionEntitlements().capabilities.copy(modLoft = true),
+        )
+
+        val state = runBlocking { session.loadModQueue(mod) }
+
+        assertEquals(null, state.items.single().snapshot.authorName)
+    }
+
+    @Test
+    fun loadModQueueClaimedByNameAndAppealStateMapping() {
+        transport = fakeTransport()
+        transport.modQueueRead = listOf(
+            ModQueueItemRead(
+                reportId = "rep_3",
+                state = "claimed",
+                claimedBy = "u_other",
+                reason = "harassment",
+                reporterCount = 1,
+                snapshot = ModSnapshotRead("body", "u_self", "ch_general", "2026-11-27T01:00:00Z", emptyList()),
+                authorHistory = listOf(ModHistoryRead("mute", "harassment", "2026-11-26T01:00:00Z")),
+                appeal = ModAppealRead("please", "u_mod", "pending"),
+            ),
+            ModQueueItemRead(
+                reportId = "rep_4",
+                state = "open",
+                claimedBy = null,
+                reason = "spam",
+                reporterCount = 3,
+                snapshot = ModSnapshotRead("body2", "u_self", "ch_general", "2026-11-27T01:30:00Z", emptyList()),
+                authorHistory = emptyList(),
+                appeal = ModAppealRead("why", "u_mod", "bogus-wire"),
+            ),
+        )
+        buildSession()
+        session.start()
+        val mod = sessionEntitlements().copy(
+            capabilities = sessionEntitlements().capabilities.copy(modLoft = true),
+        )
+
+        val state = runBlocking { session.loadModQueue(mod) }
+
+        val claimed = state.items.first { it.reportId == "rep_3" }
+        assertEquals("Other", claimed.claimedByName)
+        assertEquals(AppealState.Pending, claimed.appeal?.state)
+        assertEquals("mute", claimed.authorHistory.single().rung)
+        val open = state.items.first { it.reportId == "rep_4" }
+        assertEquals(null, open.claimedByName)
+        assertEquals(AppealState.None, open.appeal?.state)
     }
 }
