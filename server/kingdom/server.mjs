@@ -16,6 +16,7 @@
 
 import http from "node:http";
 import crypto from "node:crypto";
+import { computeSpotlightState } from "./spotlight.mjs";
 
 const PORT = Number(process.env.KINGDOM_PORT ?? 8799);
 const HOST = process.env.KINGDOM_HOST ?? "0.0.0.0";
@@ -118,6 +119,11 @@ modQueue[0].snapshot = snapshotOf(spamMessage);
 const modLog = [
   { actor_id: "u_mod", action: "mute", target_id: "u_spammer", reason: "spam", at: nowIso() },
 ];
+// Spotlight auction wins (spotlight.mjs holds the state model).
+// No bid shape exists in the contract, so nothing records wins yet;
+// the read below serves the state model over this list.
+const spotlightWins = [];
+
 const suggestions = [
   { id: "sug_1", title: "Move rig 2 to the night window", body: "Rounds after 02:00 UTC paid out 12% more this week." },
   { id: "sug_2", title: "Arm the standing pump rule", body: "Wallet 1 drops below the tank threshold most mornings." },
@@ -260,7 +266,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && path === "/api/entitlements") return json(res, 200, entitlementsFor(user));
     if (req.method === "GET" && path === "/api/channels") return json(res, 200, { channels: readableChannels(user) });
     if (req.method === "GET" && path === "/api/spotlight") {
-      return json(res, 200, { occupied: false, post: null, window_ends_at: null, floor_usd: 50 });
+      return json(res, 200, computeSpotlightState(spotlightWins, Date.now()));
     }
     if (req.method === "GET" && path === "/api/me") return json(res, 200, { user_id: user.id, member: memberShape(user) });
     if (req.method === "GET" && path === "/api/members") {

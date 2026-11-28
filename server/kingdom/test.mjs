@@ -6,6 +6,7 @@
 
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { PIN_SLOT_COUNT, PIN_AUCTION_FLOOR_CENTS, PIN_WINDOW_MS, scheduleWin, computeSpotlightState } from "./spotlight.mjs";
 import net from "node:net";
 import crypto from "node:crypto";
 
@@ -256,6 +257,34 @@ try {
   ok(me.body.user_id === "u_mod" && me.body.member.moderator === true, "me: caller identity + moderator flag");
   const spot = await get("/api/spotlight", "u_host");
   ok(spot.body.occupied === false && spot.body.floor_usd === 50, "spotlight: vacant at the $50 floor");
+
+  // 12b — spotlight auction state model (spotlight.mjs; price model of
+  // record 2026-11-27: pins are auctioned, deferred activation, 12h windows)
+  const T0 = 1800000000000;
+  const w1 = { author_id: "u_a", body: "A", commercial: false, starts_at: T0 - 1000, ends_at: 1800043199000 };
+  const w2 = { author_id: "u_b", body: "B", commercial: true, starts_at: T0 - 2000, ends_at: 1800043198000 };
+  ok(PIN_SLOT_COUNT === 2 && PIN_AUCTION_FLOOR_CENTS === 5000 && PIN_WINDOW_MS === 43200000,
+    "spotlight auction: interim constants pinned (2 slots, $50 floor, 12h window)");
+  const firstWin = scheduleWin([], { author_id: "u_a", body: "A", commercial: false }, T0);
+  ok(firstWin.starts_at === 1800000000000 && firstWin.ends_at === 1800043200000,
+    "spotlight auction: first win starts now and runs 12h");
+  ok(scheduleWin([w1], { author_id: "u_c", body: "C", commercial: false }, T0).starts_at === T0,
+    "spotlight auction: free slot starts immediately (not deferred)");
+  const deferredWin = scheduleWin([w1, w2], { author_id: "u_c", body: "C", commercial: false }, T0);
+  ok(deferredWin.starts_at === 1800043198000 && deferredWin.ends_at === 1800086398000,
+    "spotlight auction: full slots defer to the earliest expiry, never early");
+  const rawWin = { author_id: "u_c", body: "C", commercial: false };
+  scheduleWin([w1, w2], rawWin, T0);
+  ok(("starts_at" in rawWin) === false, "spotlight auction: scheduleWin mutates nothing");
+  const vacantState = computeSpotlightState([], T0);
+  ok(vacantState.occupied === false && vacantState.post === null && vacantState.window_ends_at === null && vacantState.floor_usd === 50,
+    "spotlight auction: no wins reads vacant at the floor");
+  const servedState = computeSpotlightState([w1, w2], T0);
+  ok(servedState.occupied === true && servedState.post.author_id === "u_b" && servedState.post.commercial === true &&
+    servedState.window_ends_at === new Date(1800043198000).toISOString() && servedState.floor_usd === 50,
+    "spotlight auction: earliest-ending active win is served");
+  ok(computeSpotlightState([{ author_id: "u_c", body: "C", commercial: false, starts_at: T0 + 1000, ends_at: 1800043201000 }], T0).occupied === false,
+    "spotlight auction: a deferred win does not occupy");
 
   // 13 — search is entitlement-filtered
   const found = await get("/api/search?q=motherlode", "u_host");
