@@ -144,10 +144,16 @@ function snapshotOf(m) {
 }
 
 /* ============================ identity (stub) =========================== */
-// LOCAL ONLY: `Authorization: Bearer local:<user_id>` or an
-// X-Kingdom-Wallet header matching a seed wallet selects the user;
-// anything else falls back to u_host. Never a production auth shape.
+// LOCAL ONLY, and only under KINGDOM_DEV_HOOKS=1 (B-2): `Authorization:
+// Bearer local:<user_id>` or an X-Kingdom-Wallet header matching a seed
+// wallet selects the user; anything else falls back to u_host. Never a
+// production auth shape. Without the flag there is no identity rule at
+// all: callerOf returns null and every surface fails closed (HTTP 401,
+// WS upgrade refused) — no stub identity, no default user. The
+// production identity mechanism rides the host's SIWS and is out of
+// scope for this local backend.
 function callerOf(req) {
+  if (!DEV_HOOKS) return null;
   const auth = req.headers["authorization"] ?? "";
   const m = /^Bearer local:(.+)$/.exec(auth);
   if (m && users.has(m[1])) return users.get(m[1]);
@@ -266,6 +272,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const path = url.pathname;
   const user = callerOf(req);
+  if (!user) return json(res, 401, { error: "unauthorized" });
   try {
     if (req.method === "GET" && path === "/api/entitlements") return json(res, 200, entitlementsFor(user));
     if (req.method === "GET" && path === "/api/channels") return json(res, 200, { channels: readableChannels(user) });
@@ -731,6 +738,11 @@ server.on("upgrade", (req, socket, head) => {
   const key = req.headers["sec-websocket-key"];
   if (!key) { socket.destroy(); return; }
   const user = callerOf(req);
+  if (!user) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
+    return;
+  }
   socket.write(
     "HTTP/1.1 101 Switching Protocols\r\n" +
     "Upgrade: websocket\r\n" +

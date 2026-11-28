@@ -13,7 +13,7 @@ const N = Number(process.argv[2] ?? 50);
 
 const server = spawn("node", ["server.mjs"], {
   cwd: new URL(".", import.meta.url).pathname,
-  env: { ...process.env, KINGDOM_PORT: String(PORT), KINGDOM_HOST: "127.0.0.1" },
+  env: { ...process.env, KINGDOM_PORT: String(PORT), KINGDOM_HOST: "127.0.0.1", KINGDOM_DEV_HOOKS: "1" },
   stdio: ["ignore", "pipe", "inherit"],
 });
 await new Promise((resolve) => server.stdout.once("data", resolve));

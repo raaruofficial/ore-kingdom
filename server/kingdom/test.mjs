@@ -1400,11 +1400,38 @@ c55Sock.close(); c55Other.close();
     });
     return { status: r.status, body: await r.json().catch(() => ({})) };
   }
-  // B-1: the dev hooks must not exist in a default boot.
+  // B-1: the dev hooks must not exist in a default boot. The bare
+  // boot answers 401 (B-2's identity gate sits in front of routing);
+  // behind any identity the flag-gated routes themselves 404. The pin
+  // is the property: the hooks never execute (never 200).
   const b1Lapse = await barePost("/api/dev/lapse", { user_id: "u_mod" });
-  ok(b1Lapse.status === 404, "B-1: POST /api/dev/lapse is 404 in a default boot (no KINGDOM_DEV_HOOKS)");
+  ok(b1Lapse.status === 401 || b1Lapse.status === 404, "B-1: POST /api/dev/lapse never executes in a default boot (no KINGDOM_DEV_HOOKS)");
   const b1Restore = await barePost("/api/dev/restore", { user_id: "u_spammer" });
-  ok(b1Restore.status === 404, "B-1: POST /api/dev/restore is 404 in a default boot");
+  ok(b1Restore.status === 401 || b1Restore.status === 404, "B-1: POST /api/dev/restore never executes in a default boot");
+  // B-2: no stub identity and no default user in a default boot —
+  // every request without the (absent) production identity fails 401.
+  async function bareGet(path, headers = {}) {
+    const r = await fetch(BARE + path, { headers });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  }
+  const b2NoAuth = await bareGet("/api/me");
+  ok(b2NoAuth.status === 401, "B-2: no credentials -> 401 in a default boot (no default user)");
+  const b2Stub = await bareGet("/api/me", { authorization: "Bearer local:u_mod" });
+  ok(b2Stub.status === 401, "B-2: Bearer local: stub identity is not honoured in a default boot");
+  const b2Wallet = await bareGet("/api/entitlements", { "x-kingdom-wallet": "wallet_mod" });
+  ok(b2Wallet.status === 401, "B-2: X-Kingdom-Wallet stub identity is not honoured in a default boot");
+  const b2WsHead = await new Promise((resolve) => {
+    const sock = net.connect(18801, "127.0.0.1", () => {
+      const key = crypto.randomBytes(16).toString("base64");
+      sock.write(`GET /ws HTTP/1.1\r\nHost: 127.0.0.1:18801\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\nAuthorization: Bearer local:u_host\r\n\r\n`);
+    });
+    let head = "";
+    sock.on("data", (c) => { head += c.toString(); if (head.includes("\r\n\r\n") || head.length > 512) { sock.destroy(); resolve(head); } });
+    sock.on("error", () => resolve(head));
+    sock.on("close", () => resolve(head));
+    setTimeout(() => { sock.destroy(); resolve(head); }, 2000);
+  });
+  ok(!b2WsHead.includes("101"), "B-2: WS upgrade with stub identity is refused in a default boot (no 101)");
   bare.kill();
 
   a.close(); b.close(); c.close(); d.close(); aBad.close();

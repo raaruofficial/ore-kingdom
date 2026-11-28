@@ -28,7 +28,7 @@ fail() { echo "FAIL: $1" | tee -a "$EVIDENCE/checks.txt"; FAIL=1; }
 # earlier workflow step does not reliably survive step boundaries on
 # GitHub-hosted runners (first run, 45959233758: host step reported
 # up, emulator probe found nothing listening).
-KINGDOM_PORT=8799 KINGDOM_HOST=0.0.0.0 node "$BACKEND_DIR/server.mjs" > "$EVIDENCE/backend.log" 2>&1 &
+KINGDOM_PORT=8799 KINGDOM_HOST=0.0.0.0 KINGDOM_DEV_HOOKS=1 node "$BACKEND_DIR/server.mjs" > "$EVIDENCE/backend.log" 2>&1 &
 BACKEND_PID=$!
 trap 'kill $BACKEND_PID 2>/dev/null || true' EXIT
 READY=0

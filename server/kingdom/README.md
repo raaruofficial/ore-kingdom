@@ -20,16 +20,20 @@ client contract, for local development and proof only.
 
 - **Local only.** In-memory seeded state; nothing persists;
   nothing is deployed anywhere.
-- **Identity is a stub:** `Authorization: Bearer local:<user_id>`
-  (seed users `u_host` member, `u_mod` moderator, `u_op` operator,
-  `u_free` free, `u_spammer` member) or an `X-Kingdom-Wallet`
-  header matching a seed wallet; default `u_host`. This is NOT a
-  production auth shape — production binds the connection to the
-  wallet identity per CONTRACT §1.
+- **Identity is a stub, dev-flag only:** with `KINGDOM_DEV_HOOKS=1`
+  (set by the local test rigs, never a default), `Authorization:
+  Bearer local:<user_id>` (seed users `u_host` member, `u_mod`
+  moderator, `u_op` operator, `u_free` free, `u_spammer` member) or
+  an `X-Kingdom-Wallet` header matching a seed wallet selects the
+  user; default `u_host`. Without the flag there is no identity rule:
+  HTTP answers 401 and the WS upgrade is refused (Phase 3 audit
+  B-1/B-2). This is NOT a production auth shape — production binds
+  the connection to the wallet identity per CONTRACT §1.
 - **No money surface:** no payment, purchase, bid, tip, gift, or
   signing shape exists (CONTRACT §8). Pass state changes happen
   only through the local test hooks below.
-- **Test hooks (not contract surface):** `POST /api/dev/lapse`
+- **Test hooks (not contract surface, `KINGDOM_DEV_HOOKS=1` only):**
+  `POST /api/dev/lapse`
   and `POST /api/dev/restore` with `{ "user_id": "…" }` flip a
   user to the lapsed (free, read-only) entitlement shape and push
   `role.update` — the push carries the server-filtered channel
