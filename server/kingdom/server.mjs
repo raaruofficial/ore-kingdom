@@ -20,6 +20,10 @@ import { computeSpotlightState } from "./spotlight.mjs";
 
 const PORT = Number(process.env.KINGDOM_PORT ?? 8799);
 const HOST = process.env.KINGDOM_HOST ?? "0.0.0.0";
+// Dev surface (stub identity + /api/dev/* hooks) exists ONLY under an
+// explicit KINGDOM_DEV_HOOKS=1 — the local test rigs set it; a default
+// boot has neither (Phase 3 audit B-1/B-2, fail closed).
+const DEV_HOOKS = process.env.KINGDOM_DEV_HOOKS === "1";
 const nowIso = () => new Date().toISOString();
 const plusDays = (d) => new Date(Date.now() + d * 86_400_000).toISOString();
 
@@ -478,7 +482,9 @@ const server = http.createServer(async (req, res) => {
     }
     // LOCAL TEST HOOKS (not contract surface): drive SW2-03 — a lapse
     // (or restore) pushes role.update carrying the filtered channels.
-    if (req.method === "POST" && path === "/api/dev/lapse") {
+    // B-1: gated behind KINGDOM_DEV_HOOKS — in a default boot these
+    // routes do not exist and fall through to the 404 below.
+    if (DEV_HOOKS && req.method === "POST" && path === "/api/dev/lapse") {
       const body = await readBody(req);
       const target = users.get(body.user_id);
       if (!target) return json(res, 404, { error: "not_found" });
@@ -486,7 +492,7 @@ const server = http.createServer(async (req, res) => {
       pushEntitlements(target);
       return json(res, 200, { ok: true });
     }
-    if (req.method === "POST" && path === "/api/dev/restore") {
+    if (DEV_HOOKS && req.method === "POST" && path === "/api/dev/restore") {
       const body = await readBody(req);
       const target = users.get(body.user_id);
       if (!target) return json(res, 404, { error: "not_found" });

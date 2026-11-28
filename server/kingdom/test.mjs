@@ -110,7 +110,7 @@ class WsTest {
 /* --------------------------------- run --------------------------------- */
 const server = spawn("node", ["server.mjs"], {
   cwd: new URL(".", import.meta.url).pathname,
-  env: { ...process.env, KINGDOM_PORT: String(PORT), KINGDOM_HOST: "127.0.0.1" },
+  env: { ...process.env, KINGDOM_PORT: String(PORT), KINGDOM_HOST: "127.0.0.1", KINGDOM_DEV_HOOKS: "1" },
   stdio: ["ignore", "pipe", "inherit"],
 });
 await new Promise((resolve) => server.stdout.once("data", resolve));
@@ -1374,6 +1374,38 @@ c55Sock.close(); c55Other.close();
   const t5f7After = t5f7QueueAfter.body.items.filter((i) => i.snapshot && i.snapshot.body === t5f7Msg.body).length;
   ok(t5f7Report.status === 404 && t5f7After === t5f7Before,
     "report guard: reporting a message in a channel the reporter cannot read is 404 and queues nothing");
+
+  // 21 — Phase 3 audit fix pins (2026-11-27): one block per finding
+  // in runs/deepseek-audit-2026-11-27/AUDIT_REPORT.md. The bare boot
+  // below runs WITHOUT KINGDOM_DEV_HOOKS: the default-boot surface is
+  // what B-1/B-2 pin shut.
+  async function bootBare(port) {
+    const env = { ...process.env, KINGDOM_PORT: String(port), KINGDOM_HOST: "127.0.0.1" };
+    delete env.KINGDOM_DEV_HOOKS;
+    const srv = spawn("node", ["server.mjs"], {
+      cwd: new URL(".", import.meta.url).pathname,
+      env,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    await new Promise((resolve) => srv.stdout.once("data", resolve));
+    return srv;
+  }
+  const bare = await bootBare(18801);
+  const BARE = "http://127.0.0.1:18801";
+  async function barePost(path, obj, headers = {}) {
+    const r = await fetch(BARE + path, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(obj),
+    });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  }
+  // B-1: the dev hooks must not exist in a default boot.
+  const b1Lapse = await barePost("/api/dev/lapse", { user_id: "u_mod" });
+  ok(b1Lapse.status === 404, "B-1: POST /api/dev/lapse is 404 in a default boot (no KINGDOM_DEV_HOOKS)");
+  const b1Restore = await barePost("/api/dev/restore", { user_id: "u_spammer" });
+  ok(b1Restore.status === 404, "B-1: POST /api/dev/restore is 404 in a default boot");
+  bare.kill();
 
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
