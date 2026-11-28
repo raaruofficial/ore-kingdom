@@ -950,8 +950,12 @@ try {
   const q39Queue2 = await get("/api/mod/queue", "u_mod");
   const q39AppealItems = q39Queue2.body.items.filter((i) => i.appeal && i.state === "open" &&
     (i.snapshot.body === "q39 first appeal" || i.snapshot.body === "q39 second appeal"));
-  ok(q39AppealItems.length === 2 && q39AppealItems[0].report_id !== q39AppealItems[1].report_id,
-    "appeal finding: appealing a sanction whose appeal is already pending creates a second open queue item (no pending guard)");
+  // A-1 reversal (Phase 3 audit, verdict LAND): this pin originally
+  // documented the defect as observed behaviour ("no pending
+  // guard" — two appeals, two queue items). The guard now exists:
+  // the repeat appeal queues nothing and the first statement stands.
+  ok(q39AppealItems.length === 1 && q39AppealItems[0].snapshot.body === "q39 first appeal",
+    "appeal guard (A-1): appealing a sanction whose appeal is already pending queues no second item");
   await post("/api/reports", { target_kind: "message", target_id: introMsg.id, reason: "spam", note: "q39 unknown action" }, "u_host");
   const q39Queue3 = await get("/api/mod/queue", "u_mod");
   const q39Item2 = q39Queue3.body.items.find((i) => i.snapshot.body === introMsg.body && i.state === "open" && !i.appeal);
