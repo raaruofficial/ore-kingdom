@@ -247,6 +247,16 @@ try {
   ok(ns.body.fleet.headline.length > 0 && ns.body.suggestions.length === 2, "nightshift read: fleet + suggestions");
   const sug = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_1", accept: true }, "u_op");
   ok(sug.status === 200, "nightshift: suggestion decision accepted");
+  // B-9 (Phase 3 audit): dismissal mutates shared state and requires
+  // the nightshift console entitlement. Pinned here, while sug_2 is
+  // still live (the nightshift edge section later dismisses it as
+  // the operator — the positive control). Audit PoC P3.
+  const b9Deny = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_2" }, "u_free");
+  ok(b9Deny.status === 403, "B-9: a free-tier caller cannot dismiss a nightshift suggestion (403)");
+  const b9Member = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_2" }, "u_host");
+  ok(b9Member.status === 403, "B-9: a member (nightshift preview, read-only) cannot dismiss either");
+  const b9Still = await get("/api/modules/nightshift", "u_host");
+  ok(b9Still.body.suggestions.some((s) => s.id === "sug_2"), "B-9: the suggestion survives the refused dismissals");
   const intel = await get("/api/intel", "u_host");
   ok(intel.body.items.length === 2 && intel.body.items.every((i) => i.title && i.body && i.severity && i.at), "intel read: contract §8 item shape");
   const passes = await get("/api/passes", "u_host");
@@ -1512,19 +1522,8 @@ c55Sock.close(); c55Other.close();
   ok(a1AppealItems.length === 1, "A-1: two appeals on one pending sanction queue exactly one mod-queue item");
   a1Spam.close();
 
-  // B-9: dismissing a nightshift suggestion mutates shared state —
-  // it requires the nightshift console entitlement. A read-only
-  // free-tier caller must be refused and the suggestion must stay
-  // (audit PoC P3; sug_1 was already dismissed by the operator in
-  // section 12, so sug_2 is the live one).
-  const b9Deny = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_2" }, "u_free");
-  ok(b9Deny.status === 403, "B-9: a free-tier caller cannot dismiss a nightshift suggestion (403)");
-  const b9Still = await get("/api/modules/nightshift", "u_host");
-  ok(b9Still.body.suggestions.some((s) => s.id === "sug_2"), "B-9: the suggestion survives the refused dismissal");
-  const b9Member = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_2" }, "u_host");
-  ok(b9Member.status === 403, "B-9: a member (nightshift preview, read-only) cannot dismiss either");
-  const b9Op = await post("/api/modules/nightshift/suggestions", { suggestion_id: "sug_2" }, "u_op");
-  ok(b9Op.status === 200, "B-9: the operator (console entitlement) can dismiss");
+  // B-9's pins live in section 12 (above), where sug_2 is still
+  // live; by here the operator has legitimately dismissed it.
 
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
