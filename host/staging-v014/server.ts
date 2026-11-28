@@ -2270,7 +2270,7 @@ function pinCreatePreDispatch(args: any): string {
 function pinCreateRelease(reservationId: string): void {
   if (reservationId) sqlite.query(`DELETE FROM pin_slot_reservations WHERE id = ?`).run(reservationId);
 }
-type PinCompletePlan = { mode: "none" | "activate" | "defer"; sessionId?: string };
+type PinCompletePlan = { mode: "none" | "decide"; sessionId?: string };
 function pinCompletePreDispatch(args: any): PinCompletePlan {
   activateDeferredPins();
   const session = sqlite.query(`SELECT id FROM paid_pin_sessions WHERE id = ?`)
@@ -2278,15 +2278,24 @@ function pinCompletePreDispatch(args: any): PinCompletePlan {
   if (!session) return { mode: "none" }; // bundle refuses the unknown checkout
   const existing = sqlite.query(`SELECT id FROM paid_pins WHERE session_id = ?`).get(session.id);
   if (existing) return { mode: "none" };  // idempotent re-complete: the pin already exists
-  const live = sqlite.query(
-    `SELECT COUNT(*) AS n FROM paid_pins WHERE status = 'active' AND ends_at > ?`,
-  ).get(Date.now()) as { n: number };
-  return Number(live.n) >= PAID_PIN_CAP
-    ? { mode: "defer", sessionId: session.id }
-    : { mode: "activate", sessionId: session.id };
+  // B-10 (Phase 3 audit): NO activate/defer choice is made here. A
+  // count read now is stale the moment the bundle dispatch is
+  // awaited — another pin can activate inside that window. The
+  // choice is re-made in pinCompletePostDispatch on a fresh count.
+  return { mode: "decide", sessionId: session.id };
 }
 function pinCompletePostDispatch(out: any, plan: PinCompletePlan): void {
-  if (plan.mode !== "defer" || !out || out.ok === false || !plan.sessionId) return;
+  if (plan.mode !== "decide" || !out || out.ok === false || !plan.sessionId) return;
+  // B-10: re-count AFTER the awaited dispatch. The bundle's
+  // completion has written this session's pin row as 'active'; if
+  // the live count (this pin included) now exceeds the cap, this
+  // pin — the last to arrive — is the one parked as deferred. If a
+  // slot freed during the await, the count is within cap and the
+  // pin simply stays active.
+  const liveNow = sqlite.query(
+    `SELECT COUNT(*) AS n FROM paid_pins WHERE status = 'active' AND ends_at > ?`,
+  ).get(Date.now()) as { n: number };
+  if (Number(liveNow.n) <= PAID_PIN_CAP) return;
   // The loser is never refused after payment (A9): the bundle's own
   // completion stands (session verified, pin row written), and the
   // wrapper parks the row as 'deferred' — invisible to listForum, which
