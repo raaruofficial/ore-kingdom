@@ -2448,7 +2448,15 @@ async function handleAction(body: any, ip: string): Promise<{ status: number; pa
     return { status: 200, payload: { error: "Operator actions are unavailable in this build." } };
   if (action === "cancelSubscription")
     return { status: 200, payload: { error: "No paid subscription exists in this build." } };
-  if (!ALLOW_ACTIONS.has(action) && !V014_PAYMENT_ACTIONS.has(action) && !(a && typeof a.handler === "function"))
+  // B-4 (Phase 3 audit): the gate is now a TRUE allow-list, matching
+  // the header contract ("any action not listed ALLOW never
+  // executes"). The old third condition let any action that merely
+  // exists in the bundle dispatch — default-allow wearing an
+  // allow-list's clothes. A bundle action listed nowhere refuses
+  // here; a future bundle addition inherits refusal, never dispatch.
+  // gate-enum.test.mjs proves all 29 current actions dispatch or
+  // refuse exactly as they did before this flip.
+  if (!ALLOW_ACTIONS.has(action) && !V014_PAYMENT_ACTIONS.has(action))
     return { status: 200, payload: { error: `Action ${action} is not available in this build.` } };
   if (!a || typeof a.handler !== "function")
     return { status: 200, payload: { error: `Unknown action ${action}.` } };
