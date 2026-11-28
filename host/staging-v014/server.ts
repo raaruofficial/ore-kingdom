@@ -268,6 +268,13 @@ function base58Decode(text: string): Uint8Array {
 // honored (the bundle's self-referential field comparison cannot see
 // them), and the proof is required fresh per gated action — there is no
 // session to borrow.
+// B-6 (Phase 3 audit) adds three more requirements, all fail-closed:
+// a proof MUST carry an expirationTime (a present one was honored;
+// an absent one was silently immortal), it MUST carry an issuedAt
+// inside a 5-minute freshness window, and it MUST be bound to the
+// action it authorises — the signed message's Request ID names the
+// action, so a captured proof replays neither across time nor
+// across actions.
 const SIWS_MESSAGE_RE = (() => {
   const DOMAIN = "(?<domain>[^\\n]+?) wants you to sign in with your Solana account:\\n";
   const ADDRESS = "(?<address>[^\\n]+)(?:\\n|$)";
@@ -328,8 +335,11 @@ function verifyEd25519(message: Uint8Array, signature: Uint8Array, publicKeyRaw:
     return ed25519Verify(null, Buffer.from(message), key, Buffer.from(signature));
   } catch { return false; }
 }
+const SIWS_FRESHNESS_MS = 5 * 60_000; // B-6: issuedAt freshness window
+const SIWS_CLOCK_SKEW_MS = 60_000;    // tolerated issuer clock lead
 // Returns the verified acting wallet. Throws a named refusal otherwise.
-function requireSiwsIdentity(args: any): string {
+// `action`, when given, is the action the proof must be bound to (B-6).
+function requireSiwsIdentity(args: any, action?: string): string {
   const proof = args?.siwsIdentity;
   if (!proof || typeof proof !== "object")
     throw new Error("A verified sign-in proof is required for this action. Nothing was done.");
@@ -350,10 +360,19 @@ function requireSiwsIdentity(args: any): string {
   if (createSiwsMessageText(parsed) !== new TextDecoder().decode(signedMessage))
     throw new Error("Sign-in proof could not be verified. Nothing was done.");
   const now = Date.now();
-  if (parsed.expirationTime && !(now < Date.parse(parsed.expirationTime)))
+  if (!parsed.expirationTime)
+    throw new Error("This sign-in proof carries no expiry. Sign in again. Nothing was done.");
+  if (!(now < Date.parse(parsed.expirationTime)))
     throw new Error("This sign-in proof has expired. Sign in again. Nothing was done.");
   if (parsed.notBefore && now < Date.parse(parsed.notBefore))
     throw new Error("This sign-in proof is not yet valid. Nothing was done.");
+  if (!parsed.issuedAt)
+    throw new Error("This sign-in proof carries no issue time. Sign in again. Nothing was done.");
+  const issuedMs = Date.parse(parsed.issuedAt);
+  if (!Number.isFinite(issuedMs) || now - issuedMs > SIWS_FRESHNESS_MS || issuedMs - now > SIWS_CLOCK_SKEW_MS)
+    throw new Error("This sign-in proof is stale. Sign in again. Nothing was done.");
+  if (action !== undefined && parsed.requestId !== action)
+    throw new Error("This sign-in proof does not name the action it authorises. Nothing was done.");
   if (!verifyEd25519(signedMessage, signature, publicKey))
     throw new Error("Wallet signature verification failed. Nothing was done.");
   return address;
@@ -2354,7 +2373,7 @@ async function handleAction(body: any, ip: string): Promise<{ status: number; pa
   // the bundle or any wrapper logic downstream.
   if (GATED_ACTIONS.has(action) || SIWS_OVERWRITE_ACTIONS.has(action)) {
     try {
-      const identity = requireSiwsIdentity(args);
+      const identity = requireSiwsIdentity(args, action);
       if (typeof args?.wallet === "string" && args.wallet !== identity)
         throw new Error("The acting wallet does not match the signed identity. Nothing was done.");
       const { siwsIdentity: _proof, ...restArgs } = args ?? {};
@@ -2446,7 +2465,7 @@ async function handleAction(body: any, ip: string): Promise<{ status: number; pa
   if (action === "listForum" || action === "getThread") {
     if ((args as any)?.siwsIdentity) {
       try {
-        const proofWallet = requireSiwsIdentity(args);
+        const proofWallet = requireSiwsIdentity(args, action);
         const m = memberByWallet(proofWallet);
         readPrestige = !!m && isPrestigeMember(m);
       } catch { readPrestige = false; }
