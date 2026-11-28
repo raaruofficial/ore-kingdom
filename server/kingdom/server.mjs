@@ -214,10 +214,18 @@ function memberShape(user) {
     moderator: !!user.moderator,
   };
 }
+// B-3: deletion destroys the body. A tombstone never carries the
+// original text — the store record is cleared at delete time and the
+// shape blanks it again, so history, search-adjacent reads, and WS
+// resume replay can never serve a deleted body.
+function tombstone(m) {
+  m.deleted_at = nowIso();
+  m.body = "";
+}
 function messageShape(m, viewer) {
   return {
     id: m.id, channel_id: m.channel_id, seq: m.seq, author_id: m.author_id,
-    body: m.body, thread_id: m.thread_id, reply_to: m.reply_to,
+    body: m.deleted_at ? "" : m.body, thread_id: m.thread_id, reply_to: m.reply_to,
     created_at: m.created_at, edited_at: m.edited_at, deleted_at: m.deleted_at,
     reactions: [...m.reactions.entries()]
       .filter(([, actors]) => actors.size > 0)
@@ -439,7 +447,7 @@ const server = http.createServer(async (req, res) => {
       if (body.action === "content_removed") {
         const target = messages.find((m) => m.body === item.snapshot.body && m.author_id === authorId && m.channel_id === item.snapshot.channel_id);
         if (target && !target.deleted_at) {
-          target.deleted_at = nowIso();
+          tombstone(target);
           broadcast(target.channel_id, {
             type: "message.delete",
             channel_id: target.channel_id,
@@ -691,7 +699,7 @@ function handleClientFrame(sock, text) {
       const m = messages.find((x) => x.id === payload.message_id && x.channel_id === channelId);
       if (!m || (m.author_id !== user.id && !user.moderator)) { sock.send(errorFrame(null, "not_entitled", "own messages only")); return; }
       if (!m.deleted_at) {
-        m.deleted_at = nowIso();
+        tombstone(m);
         broadcast(channelId, frame("message.delete", { channel_id: channelId, message_id: m.id, seq: m.seq }, channelId));
       }
       break;

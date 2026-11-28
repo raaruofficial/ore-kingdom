@@ -1434,6 +1434,26 @@ c55Sock.close(); c55Other.close();
   ok(!b2WsHead.includes("101"), "B-2: WS upgrade with stub identity is refused in a default boot (no 101)");
   bare.kill();
 
+  // B-3: a deleted message's body is never served again — the
+  // tombstone carries no body, in history or in resume replay.
+  const b3Host = await new WsTest().connect("u_host");
+  b3Host.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await b3Host.waitFor((f) => f.type === "presence", "b3 subscribed");
+  b3Host.send({ type: "send", id: "c_b3_1", channel_id: "ch_general", payload: { body: "b3-secret-body-xyz" } });
+  const b3Ack = await b3Host.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_b3_1", "b3 ack");
+  b3Host.send({ type: "delete", channel_id: "ch_general", payload: { message_id: b3Ack.payload.message_id } });
+  await b3Host.waitFor((f) => f.type === "message.delete" && f.payload.message_id === b3Ack.payload.message_id, "b3 delete broadcast");
+  const b3Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_free");
+  const b3Rec = b3Hist.body.messages.find((m) => m.id === b3Ack.payload.message_id);
+  ok(!!b3Rec && b3Rec.deleted_at !== null && b3Rec.body !== "b3-secret-body-xyz" && !String(b3Rec.body ?? "").includes("b3-secret"),
+    "B-3: history serves the tombstone without the deleted body");
+  const b3Replay = await new WsTest().connect("u_free");
+  b3Replay.send({ type: "resume", payload: { last_seq: { ch_general: b3Ack.payload.seq - 1 } } });
+  const b3Frame = await b3Replay.waitFor((f) => f.type === "message" && f.payload.message.id === b3Ack.payload.message_id, "b3 resume replay");
+  ok(b3Frame.payload.message.body !== "b3-secret-body-xyz" && !String(b3Frame.payload.message.body ?? "").includes("b3-secret"),
+    "B-3: resume replay serves the tombstone without the deleted body");
+  b3Host.close(); b3Replay.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
