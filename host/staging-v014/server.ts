@@ -88,7 +88,7 @@ const JOIN_PRICE_SKR = Number(process.env.OK_JOIN_PRICE_SKR ?? 5000);
 // 2026-11-27 (unified list) — membership is unlimited.
 const PRESTIGE_PRICE_SKR = Number(process.env.OK_PRESTIGE_PRICE_SKR ?? 10000);
 const PRESTIGE_CAP = Number(process.env.OK_PRESTIGE_CAP ?? 100);
-const COMMERCIAL_PRICE_CENTS = Number(process.env.OK_COMMERCIAL_PRICE_CENTS ?? 5000);
+const COMMERCIAL_PRICE_CENTS = Number(process.env.OK_COMMERCIAL_PRICE_CENTS ?? 2500);
 // M2 (R7–R10): the prestige VIP board is a forum category identified by
 // slug. Holders are its only readers and writers; the wrapper resolves
 // the category per call so a renamed/absent board fails safe (no slug
