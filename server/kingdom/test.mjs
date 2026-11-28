@@ -1484,6 +1484,30 @@ c55Sock.close(); c55Other.close();
     "A-2: content_removed deleted the reported message, not the identical-body earlier one");
   a2Host.close();
 
+  // A-1: a repeat appeal on an already-appealed (pending) sanction
+  // must not re-queue a duplicate mod-queue item (audit PoC P9). A
+  // fresh appeal after a decision still opens a fresh item — that
+  // behaviour is pinned in the appeals edge section above and must
+  // keep working.
+  const a1Spam = await new WsTest().connect("u_spammer");
+  a1Spam.send({ type: "send", id: "c_a1_1", channel_id: "ch_general", payload: { body: "a1 appeal bait" } });
+  const a1Ack = await a1Spam.waitFor((f) => f.type === "ack" && f.payload.for_id === "c_a1_1", "a1 ack");
+  await post("/api/reports", { target_kind: "message", target_id: a1Ack.payload.message_id, reason: "spam" }, "u_free");
+  const a1Queue0 = await get("/api/mod/queue", "u_mod");
+  const a1Item = a1Queue0.body.items.filter((i) => i.state === "open" && i.snapshot.body === "a1 appeal bait").pop();
+  await post("/api/mod/claim", { report_id: a1Item.report_id }, "u_mod");
+  await post("/api/mod/action", { report_id: a1Item.report_id, action: "mute", reason_code: "spam", duration_sec: 424242 }, "u_mod");
+  const a1Sanctions = await get("/api/sanctions", "u_spammer");
+  const a1Sanction = a1Sanctions.body.sanctions.find((s) => s.duration_sec === 424242);
+  ok(!!a1Sanction && a1Sanction.appeal.state === "none", "A-1: setup — a fresh mute sanction with no appeal");
+  const a1First = await post("/api/appeals", { sanction_id: a1Sanction.sanction_id, statement: "a1 first appeal" }, "u_spammer");
+  const a1Second = await post("/api/appeals", { sanction_id: a1Sanction.sanction_id, statement: "a1 duplicate appeal" }, "u_spammer");
+  ok(a1First.status === 200 && a1Second.status === 200, "A-1: both appeal calls answer 200 (the repeat is idempotent, not an error)");
+  const a1Queue1 = await get("/api/mod/queue", "u_mod");
+  const a1AppealItems = a1Queue1.body.items.filter((i) => i.appeal && i.snapshot.body.startsWith("a1 ") && i.snapshot.body.includes("appeal"));
+  ok(a1AppealItems.length === 1, "A-1: two appeals on one pending sanction queue exactly one mod-queue item");
+  a1Spam.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();

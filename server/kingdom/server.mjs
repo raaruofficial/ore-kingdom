@@ -415,6 +415,10 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const sanction = sanctions.find((s) => s.sanction_id === body.sanction_id && s.user_id === user.id);
       if (!sanction) return json(res, 404, { error: "not_found" });
+      // A-1: an appeal is already pending on this sanction — the
+      // repeat is idempotent (200, no duplicate queue item). Only a
+      // decided sanction (upheld) may be appealed afresh.
+      if (sanction.appeal.state === "pending") return json(res, 200, { ok: true });
       sanction.appeal.state = "pending";
       sanction.statement = body.statement ?? "";
       modQueue.push({
