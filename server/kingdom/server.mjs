@@ -138,6 +138,10 @@ function snapshotOf(m) {
     .filter((x) => x.channel_id === m.channel_id && Math.abs(x.seq - m.seq) <= 2 && x.id !== m.id)
     .sort((a, b) => a.seq - b.seq);
   return {
+    // message_id/seq are the removal identity (A-2): content_removed
+    // targets exactly this message, never a body-text lookalike. The
+    // /api/mod/queue mapper does not expose them; they are internal.
+    message_id: m.id, seq: m.seq,
     body: m.body, author_id: m.author_id, channel_id: m.channel_id,
     created_at: m.created_at, context: ctx,
   };
@@ -445,7 +449,12 @@ const server = http.createServer(async (req, res) => {
       }
       const authorId = item.snapshot.author_id;
       if (body.action === "content_removed") {
-        const target = messages.find((m) => m.body === item.snapshot.body && m.author_id === authorId && m.channel_id === item.snapshot.channel_id);
+        // A-2: remove the reported message by its recorded identity.
+        // No body-text fallback — identical bodies must never cause
+        // the wrong message to be removed.
+        const target = item.snapshot.message_id
+          ? messages.find((m) => m.id === item.snapshot.message_id)
+          : undefined;
         if (target && !target.deleted_at) {
           tombstone(target);
           broadcast(target.channel_id, {

@@ -1458,6 +1458,32 @@ c55Sock.close(); c55Other.close();
     "B-3: resume replay serves the tombstone without the deleted body");
   b3Host.close(); b3Replay.close();
 
+  // A-2: content_removed removes the REPORTED message by identity,
+  // never by body-text match — with two identical bodies, the
+  // unreported one must survive (audit PoC P10).
+  const a2Host = await new WsTest().connect("u_host");
+  a2Host.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await a2Host.waitFor((f) => f.type === "presence", "a2 subscribed");
+  const a2Ids = [];
+  for (const fid of ["c_a2_1", "c_a2_2"]) {
+    a2Host.send({ type: "send", id: fid, channel_id: "ch_general", payload: { body: "a2-dup-body" } });
+    const ack = await a2Host.waitFor((f) => f.type === "ack" && f.payload.for_id === fid, "a2 ack " + fid);
+    a2Ids.push(ack.payload.message_id);
+  }
+  await post("/api/reports", { target_kind: "message", target_id: a2Ids[1], reason: "spam" }, "u_free");
+  const a2Queue = await get("/api/mod/queue", "u_mod");
+  const a2Item = a2Queue.body.items.filter((i) => i.state === "open" && i.snapshot.body === "a2-dup-body").pop();
+  ok(!!a2Item, "A-2: the report on the second duplicate is queued");
+  await post("/api/mod/claim", { report_id: a2Item.report_id }, "u_mod");
+  const a2Act = await post("/api/mod/action", { report_id: a2Item.report_id, action: "content_removed", reason_code: "spam" }, "u_mod");
+  ok(a2Act.status === 200, "A-2: content_removed succeeds");
+  const a2Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  const a2First = a2Hist.body.messages.find((m) => m.id === a2Ids[0]);
+  const a2Second = a2Hist.body.messages.find((m) => m.id === a2Ids[1]);
+  ok(a2First.deleted_at === null && a2Second.deleted_at !== null,
+    "A-2: content_removed deleted the reported message, not the identical-body earlier one");
+  a2Host.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
