@@ -1231,8 +1231,12 @@ c55Sock.close(); c55Other.close();
     "edit guard: no message.update is broadcast for the tombstone");
   const c61Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
   const c61Msg = c61Hist.body.messages.find((m) => m.id === c61Ack.payload.message_id);
-  ok(c61Msg.body === "c61 delete then edit" && c61Msg.edited_at === null && c61Msg.deleted_at !== null,
-    "edit guard: the tombstone keeps its original body and gains no edited_at");
+  // B-3 reversal (Phase 3 audit, verdict LAND): this pin originally
+  // asserted the tombstone KEEPS its original body — the behaviour
+  // the audit proved serves deleted content. The tombstone now
+  // carries no body; the edit-refusal half of the pin is unchanged.
+  ok(c61Msg.body === "" && c61Msg.edited_at === null && c61Msg.deleted_at !== null,
+    "edit guard: the tombstone carries no body (B-3) and gains no edited_at");
   c61Author.close(); c61Obs.close();
 
   const c62Author = await new WsTest().connect("u_host");
