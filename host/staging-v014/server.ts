@@ -84,7 +84,8 @@ const PAID_PIN_CAP = Number(process.env.OK_PAID_PIN_CAP ?? 2);
 // Late-2026-11-02 checkout surfaces: fixed SKR prices are config values
 // in whole tokens; base units derive only by the mint's 6 decimals.
 const JOIN_PRICE_SKR = Number(process.env.OK_JOIN_PRICE_SKR ?? 5000);
-const MEMBER_CAP = Number(process.env.OK_MEMBER_CAP ?? 1000);
+// No membership cap: the cap was lifted by the price model of record
+// 2026-11-27 (unified list) — membership is unlimited.
 const PRESTIGE_PRICE_SKR = Number(process.env.OK_PRESTIGE_PRICE_SKR ?? 10000);
 const PRESTIGE_CAP = Number(process.env.OK_PRESTIGE_CAP ?? 100);
 const COMMERCIAL_PRICE_CENTS = Number(process.env.OK_COMMERCIAL_PRICE_CENTS ?? 5000);
@@ -897,10 +898,6 @@ function releaseSignature(signature: string): void {
 // second money machine: SIWS-bound wallet, stored destination, fixed
 // amount, one-use reference, A4 blockTime timeliness, and an A7 registry
 // claim in the same synchronous block that moves the paid state.
-function memberCount(): number {
-  const row = sqlite.query(`SELECT COUNT(*) AS n FROM members`).get() as { n: number };
-  return Number(row.n);
-}
 function isPrestigeMember(member: any): boolean {
   const id = typeof member === "number" ? member : member?.id;
   if (!id) return false;
@@ -1001,8 +998,6 @@ function createJoinSession(args: any): any {
   if (!postSessionThrottleAllows(wallet))
     throw new Error("Too many payment sessions started. Wait a moment and try again.");
   if (memberByWallet(wallet)) throw new Error("This wallet is already a member. The join checkout is not offered twice.");
-  if (memberCount() >= MEMBER_CAP)
-    throw new Error("The kingdom is full — the member cap has been reached. Reading stays free. Nothing was charged.");
   const pending = sqlite.query(
     `SELECT COUNT(*) AS n FROM join_sessions WHERE wallet = ? AND status = 'pending'`,
   ).get(wallet) as { n: number };
@@ -1100,12 +1095,12 @@ async function completeJoinSession(args: any): Promise<any> {
     }
     throw new Error("No finalized payment found for this join session yet. Wait for confirmation and try again. Nothing was joined.");
   }
-  // Synchronous completion block (A3/A7): cap and membership are
-  // re-read here, after the async verification, and the signature is
+  // Synchronous completion block (A3/A7): membership is re-read
+  // here, after the async verification, and the signature is
   // claimed before the member row exists.
   const existing = memberByWallet(s.wallet);
-  if (existing || memberCount() >= MEMBER_CAP)
-    return applyJoinForwardCredit(s, v.signature!, s.amount, existing ? "already-member-at-completion" : "member-cap-at-completion");
+  if (existing)
+    return applyJoinForwardCredit(s, v.signature!, s.amount, "already-member-at-completion");
   if (!claimSignature(v.signature!, "join", s.id))
     throw new Error("This payment has already been used to pay for something else. Nothing was joined.");
   let insertedMemberId: number | null = null;
