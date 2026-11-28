@@ -531,7 +531,10 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 404, { error: "not_found" });
   } catch (err) {
-    return json(res, 500, { error: String(err && err.message || err) });
+    // A-3: internal error text is logged server-side only; the
+    // caller gets a generic string, never implementation detail.
+    console.error("kingdom request failed:", err);
+    return json(res, 500, { error: "internal_error" });
   }
 });
 

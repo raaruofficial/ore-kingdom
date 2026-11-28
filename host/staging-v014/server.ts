@@ -2575,7 +2575,13 @@ const server = Bun.serve({
         const { status, payload } = await handleAction(body, clientIp(req, server));
         return Response.json(payload as any, { status });
       } catch (e: any) {
-        return Response.json({ error: e?.message ?? "Internal error" }, { status: 200 });
+        // A-3: an unhandled throw is a 500-class failure — the real
+        // error is logged server-side only; the caller gets a
+        // generic string, never internal error text. (The wrapper's
+        // deliberate named refusals inside handleAction are user
+        // facing by design and are not this path.)
+        console.error("host action failed:", e);
+        return Response.json({ error: "Internal error." }, { status: 200 });
       }
     }
     if (url.pathname === "/healthz") return new Response("ok");
