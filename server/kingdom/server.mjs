@@ -618,9 +618,27 @@ function errorFrame(forId, code, message, channelId) {
   return { type: "error", ts: nowIso(), payload };
 }
 
+// B-7: typing/edit/react frames are relay-class — cheap to send,
+// broadcast to subscribers, and were relayed without any limit
+// (audit PoC P6: a 50-frame burst relayed in full). Per-connection
+// sliding window: at most 20 relay-class frames per second; excess
+// frames are dropped, never relayed.
+const RELAY_CLASS = new Set(["typing", "edit", "react"]);
+const RELAY_LIMIT = 20;
+const RELAY_WINDOW_MS = 1000;
+function relayAllowed(sock) {
+  const now = Date.now();
+  const times = (sock.relayTimes ??= []);
+  while (times.length && now - times[0] >= RELAY_WINDOW_MS) times.shift();
+  if (times.length >= RELAY_LIMIT) return false;
+  times.push(now);
+  return true;
+}
+
 function handleClientFrame(sock, text) {
   let env;
   try { env = JSON.parse(text); } catch { return; }
+  if (RELAY_CLASS.has(env.type) && !relayAllowed(sock)) return;
   const user = sock.user;
   const payload = env.payload ?? {};
   const channelId = env.channel_id ?? payload.channel_id;

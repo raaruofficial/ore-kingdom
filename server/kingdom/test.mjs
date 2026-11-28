@@ -1525,6 +1525,21 @@ c55Sock.close(); c55Other.close();
   // B-9's pins live in section 12 (above), where sug_2 is still
   // live; by here the operator has legitimately dismissed it.
 
+  // B-7: typing/edit/react frames are rate-limited per connection
+  // (audit PoC P6: a 50-frame typing burst relayed in full). A burst
+  // of 50 must land at the listener capped, not whole.
+  const b7Listener = await new WsTest().connect("u_mod");
+  b7Listener.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await b7Listener.waitFor((f) => f.type === "presence", "b7 listener ready");
+  const b7Sender = await new WsTest().connect("u_op");
+  await new Promise((r) => setTimeout(r, 200));
+  for (let i = 0; i < 50; i++)
+    b7Sender.send({ type: "typing", channel_id: "ch_general", payload: { state: "typing" } });
+  await new Promise((r) => setTimeout(r, 900));
+  const b7Got = b7Listener.count((f) => f.type === "typing" && f.payload.user_id === "u_op");
+  ok(b7Got >= 1 && b7Got <= 20, `B-7: a 50-frame typing burst is relayed capped (got ${b7Got}, cap 20/s per connection)`);
+  b7Listener.close(); b7Sender.close();
+
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
   server.kill();
