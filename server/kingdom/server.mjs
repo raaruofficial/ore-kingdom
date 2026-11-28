@@ -18,6 +18,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { computeSpotlightState } from "./spotlight.mjs";
 
+const SEARCH_RESULT_CAP = 50;
 const PORT = Number(process.env.KINGDOM_PORT ?? 8799);
 const HOST = process.env.KINGDOM_HOST ?? "0.0.0.0";
 // Dev surface (stub identity + /api/dev/* hooks) exists ONLY under an
@@ -313,13 +314,18 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (req.method === "GET" && path === "/api/search") {
-      const q = (url.searchParams.get("q") ?? "").toLowerCase();
+      // B-8: search requires a real query and is capped — the old
+      // no-q behaviour returned the whole readable corpus (PoC P7).
+      const qRaw = url.searchParams.get("q");
+      if (qRaw === null || qRaw.trim() === "") return json(res, 400, { error: "q_required" });
+      const q = qRaw.toLowerCase();
       const readable = new Set(readableChannels(user).map((c) => c.id));
       return json(res, 200, {
         messages: messages
           .filter((m) => readable.has(m.channel_id) && m.deleted_at === null && m.body.toLowerCase().includes(q))
+          .slice(0, SEARCH_RESULT_CAP)
           .map((m) => messageShape(m, user)),
-        threads: threads.filter((t) => readable.has(t.channel_id) && t.title.toLowerCase().includes(q)),
+        threads: threads.filter((t) => readable.has(t.channel_id) && t.title.toLowerCase().includes(q)).slice(0, SEARCH_RESULT_CAP),
       });
     }
     if (req.method === "GET" && path === "/api/threads") {
@@ -544,6 +550,10 @@ const server = http.createServer(async (req, res) => {
 
 /* ============================ WebSocket layer =========================== */
 
+// B-8: one WS frame may carry at most 64 KiB — enforced on the
+// announced length in FrameParser (before buffering) and again on
+// the decoded text in handleClientFrame.
+const MAX_WS_FRAME_BYTES = 64 * 1024;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const acceptKey = (key) => crypto.createHash("sha1").update(key + WS_GUID).digest("base64");
 
@@ -573,6 +583,7 @@ class FrameParser {
     this.onClose = onClose;
   }
   push(chunk) {
+    if (this.dead) return;
     this.buf = Buffer.concat([this.buf, chunk]);
     for (;;) {
       if (this.buf.length < 2) return;
@@ -587,6 +598,12 @@ class FrameParser {
       } else if (len === 127) {
         if (this.buf.length < off + 8) return;
         len = Number(this.buf.readBigUInt64BE(off)); off += 8;
+      }
+      if (len > MAX_WS_FRAME_BYTES) {
+        // Announced length over the cap: never buffer it — close.
+        this.dead = true;
+        this.onClose();
+        return;
       }
       const maskLen = masked ? 4 : 0;
       if (this.buf.length < off + maskLen + len) return;
@@ -636,6 +653,10 @@ function relayAllowed(sock) {
 }
 
 function handleClientFrame(sock, text) {
+  if (Buffer.byteLength(text, "utf8") > MAX_WS_FRAME_BYTES) {
+    sock.send(errorFrame(null, "message_too_large", "frame exceeds the size cap"));
+    return;
+  }
   let env;
   try { env = JSON.parse(text); } catch { return; }
   if (RELAY_CLASS.has(env.type) && !relayAllowed(sock)) return;

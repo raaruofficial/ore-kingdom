@@ -719,20 +719,16 @@ try {
   const pageDefault = await get("/api/history?channel_id=ch_general&limit=0", "u_host");
   ok(pageDefault.body.messages.length === Math.min(50, page200.body.messages.length),
     "history edge: limit=0 falls back to the default page size of 50");
-  const readableIds = ["ch_announcements", "ch_general", "ch_introductions", "ch_help_desk", "ch_strategy", "ch_town_square_tips", "ch_pump", "ch_nightshift"];
-  let expectedSearchCount = 0;
-  for (const cid of readableIds) {
-    let before = null;
-    for (;;) {
-      const page = await get(`/api/history?channel_id=${cid}&limit=200${before === null ? "" : `&before_seq=${before}`}`, "u_host");
-      expectedSearchCount += page.body.messages.filter((m) => m.deleted_at === null).length;
-      if (!page.body.has_more) break;
-      before = page.body.messages[0].seq;
-    }
-  }
+  // B-8 reversal (Phase 3 audit, verdict LAND): this block originally
+  // pinned "empty q returns every readable non-deleted message" —
+  // the corpus dump the audit proved (PoC P7). Search now requires a
+  // non-empty q; the corpus-count loop that fed the old pin is gone.
   const emptySearch = await get("/api/search?q=", "u_host");
-  ok(emptySearch.body.messages.length === expectedSearchCount,
-    "search edge: empty q returns every readable non-deleted message");
+  ok(emptySearch.status === 400 && emptySearch.body.error === "q_required",
+    "search edge (B-8): an empty q is refused 400 q_required, never a corpus dump");
+  const noQSearch = await get("/api/search", "u_host");
+  ok(noQSearch.status === 400 && noQSearch.body.error === "q_required",
+    "search edge (B-8): a missing q is refused 400 q_required");
   const upperSearch = await get("/api/search?q=MOTHERLODE", "u_host");
   ok(upperSearch.body.messages.length === 1 && upperSearch.body.messages[0].body.toLowerCase().includes("motherlode"),
     "search edge: an uppercase query matches a lowercase body");
@@ -1539,6 +1535,46 @@ c55Sock.close(); c55Other.close();
   const b7Got = b7Listener.count((f) => f.type === "typing" && f.payload.user_id === "u_op");
   ok(b7Got >= 1 && b7Got <= 20, `B-7: a 50-frame typing burst is relayed capped (got ${b7Got}, cap 20/s per connection)`);
   b7Listener.close(); b7Sender.close();
+
+  // B-8: WS frames are size-capped (audit PoC P8: a 1 MiB body was
+  // acked, stored, and served back) and search results are capped.
+  const b8Host = await new WsTest().connect("u_host");
+  b8Host.send({ type: "subscribe", payload: { channel_ids: ["ch_general"] } });
+  await b8Host.waitFor((f) => f.type === "presence", "b8 subscribed");
+  b8Host.send({ type: "send", id: "c_b8_big", channel_id: "ch_general", payload: { body: "y".repeat(1024 * 1024) } });
+  await new Promise((r) => setTimeout(r, 800));
+  ok(b8Host.count((f) => f.type === "ack" && f.payload.for_id === "c_b8_big") === 0,
+    "B-8: a 1 MiB message frame is not acked");
+  const b8Hist = await get("/api/history?channel_id=ch_general&limit=200", "u_host");
+  ok(!b8Hist.body.messages.some((m) => (m.body ?? "").length > 65536),
+    "B-8: no oversized body is stored or served");
+  b8Host.close();
+  // FrameParser announced-length cap: a header announcing a huge
+  // payload must close the connection, not buffer forever.
+  const b8Closed = await new Promise((resolve) => {
+    const sock = net.connect(PORT, "127.0.0.1", () => {
+      const key = crypto.randomBytes(16).toString("base64");
+      sock.write(`GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${PORT}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\nAuthorization: Bearer local:u_host\r\n\r\n`);
+    });
+    let handshook = false;
+    sock.on("data", (c) => {
+      if (!handshook && c.toString().includes("101")) {
+        handshook = true;
+        const hdr = Buffer.alloc(14);
+        hdr[0] = 0x81; hdr[1] = 0xff; // masked, 127-form length
+        hdr.writeBigUInt64BE(2n ** 40n, 2);
+        crypto.randomBytes(4).copy(hdr, 10);
+        sock.write(hdr);
+      }
+    });
+    sock.on("close", () => resolve(true));
+    sock.on("error", () => resolve(true));
+    setTimeout(() => { sock.destroy(); resolve(false); }, 2500);
+  });
+  ok(b8Closed === true, "B-8: an announced payload length over the cap closes the connection");
+  const b8Search = await get("/api/search?q=bulk", "u_host");
+  ok(b8Search.status === 200 && b8Search.body.messages.length === 50,
+    `B-8: search results are capped at 50 (the bulk fixture alone has 501 matches; got ${b8Search.body.messages.length})`);
 
   a.close(); b.close(); c.close(); d.close(); aBad.close();
 } finally {
