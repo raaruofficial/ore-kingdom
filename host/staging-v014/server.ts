@@ -167,6 +167,16 @@ const GATED_ACTIONS = new Set([
   "createTipCheckout", "completeTipCheckout",
   "createPaidPinCheckout", "completePaidPinCheckout",
 ]);
+// B-5 (Phase 3 audit): the SIWS identity overwrite is not only for
+// gated actions. These bundle write actions carry a caller-asserted
+// actor identity in args and were dispatched without any overwrite,
+// so the asserted identity stood. They get the gated treatment: a
+// verified proof is required and the acting wallet is derived from
+// it, never trusted from args.
+const SIWS_OVERWRITE_ACTIONS = new Set([
+  "voteFounderPoll", "voteRestore", "toggleLike", "reportContent",
+  "markNotificationsRead", "claimFoundingSpot",
+]);
 // Bundle actions whose dispatch goes through the bundle's own request
 // schema (B11) — the parsed output (defaults applied, unknown keys
 // stripped by the schema itself) is what the handler receives.
@@ -2337,11 +2347,12 @@ async function handleAction(body: any, ip: string): Promise<{ status: number; pa
   const a = (Actions as any)[action];
   if (carriesDemoWallet(args))
     return { status: 200, payload: { error: "DEMO fixtures are disabled in this build." } };
-  // B2: identity first. For gated actions, the acting wallet is the
+  // B2: identity first. For gated actions — and, per B-5, for every
+  // write action in SIWS_OVERWRITE_ACTIONS — the acting wallet is the
   // SIWS-verified identity; a client-asserted args.wallet that disagrees
   // is a refusal (a spoof attempt), and the proof fields never reach
   // the bundle or any wrapper logic downstream.
-  if (GATED_ACTIONS.has(action)) {
+  if (GATED_ACTIONS.has(action) || SIWS_OVERWRITE_ACTIONS.has(action)) {
     try {
       const identity = requireSiwsIdentity(args);
       if (typeof args?.wallet === "string" && args.wallet !== identity)
