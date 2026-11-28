@@ -502,6 +502,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method === "POST" && path === "/api/modules/nightshift/suggestions") {
+      // B-9: dismissal mutates shared state — it requires the
+      // nightshift console entitlement (operator+). Free callers and
+      // read-only preview members are refused.
+      if (!entitlementsFor(user).capabilities.nightshift_console) return json(res, 403, { error: "not_entitled" });
       const body = await readBody(req);
       const idx = suggestions.findIndex((s) => s.id === body.suggestion_id);
       if (idx === -1) return json(res, 404, { error: "not_found" });
