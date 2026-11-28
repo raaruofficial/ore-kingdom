@@ -95,7 +95,7 @@ internal object PassCopy {
                 PassOption("7d", "$49 / 7 days", "$34.30"),
                 PassOption("30d", "$99 / 30 days", "$69.30"),
             ),
-            includes = "Includes unlimited Pump Days and the ATM unlock",
+            includes = "Includes unlimited Pump Days, the ATM unlock, and Nightshift intel",
         ),
         PassProduct(
             id = "syndicate", role = OreRole.Syndicate,
